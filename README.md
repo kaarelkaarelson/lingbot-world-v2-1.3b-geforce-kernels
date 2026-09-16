@@ -1,4 +1,4 @@
-# LingBot-World 1.3B — GeForce kernels
+# LingBot-World 2.0 (1.3B) — GeForce kernels
 
 Real-time [LingBot-World 2.0](https://github.com/Robbyant/lingbot-world-v2) (1.3B `causal_fast`) on one RTX 5090: **16.2 FPS as played** at 832×464, up from 5.5 FPS with the stock code, with the original Wan 2.1 decoder and no change to the model. Real time is 16 FPS.
 
@@ -17,8 +17,8 @@ This is the upstream repository at commit `1895d30` plus a set of inference patc
 Linux x86_64, Python 3.12, an NVIDIA driver with CUDA 12.8, one RTX 5090. WSL2 works.
 
 ```bash
-git clone https://github.com/kaarelkaarelson/lingbot-world-1.3b-geforce-kernels
-cd lingbot-world-1.3b-geforce-kernels
+git clone https://github.com/kaarelkaarelson/lingbot-world-v2-1.3b-geforce-kernels
+cd lingbot-world-v2-1.3b-geforce-kernels
 HF_TOKEN=hf_... ./setup.sh        # venv, pinned torch 2.8 + cu128, prebuilt sm_120 kernels, ~15 GB of weights, warm-up
 ./run.sh --frame_num 361 --bench  # 22 s clip from examples/03 -> outputs/, prints s/chunk and FPS
 ```
