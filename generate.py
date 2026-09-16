@@ -13,6 +13,48 @@ import torch
 import torch.distributed as dist
 from PIL import Image
 
+# Presets are applied as LINGBOT_* environment defaults before `wan` is imported,
+# because the fused DiT and the attention backend are chosen at import time.
+# Explicitly exported LINGBOT_* variables win over the preset.
+PRESETS = {
+    # 16.2 FPS on one RTX 5090 (OPTIMIZATIONS.md in lingbot-world-bench, exp. 15):
+    # torch.compile + coordinate-descent tuning, fused DiT, sync-free loop,
+    # compensated-fp32 RoPE, FP8 rowwise linears, SageAttention, fused fp16 VAE.
+    "fast": {
+        "LINGBOT_TORCH_COMPILE": "1", "LINGBOT_INDUCTOR_TUNE": "1",
+        "LINGBOT_DIT_FUSION": "1", "LINGBOT_SYNCFREE": "1",
+        "LINGBOT_DIT_FUSION_ROPE": "fp32c", "LINGBOT_FP8": "1",
+        "LINGBOT_ATTN": "sage", "LINGBOT_VAE_FUSED": "1",
+        "LINGBOT_VAE_SUBPIXEL": "1", "LINGBOT_VAE_WARM": "1",
+    },
+    # Same, with the DiT bit-identical to the stock bf16 model (14.8 FPS):
+    # the one-row time-embedding MLP is expanded back to L rows.
+    "exact": {"LINGBOT_DIT_FUSION_EXACT_T": "1"},
+    # Upstream code path, no optimisation (5.5 FPS): for A/B comparisons.
+    "stock": {},
+}
+PRESETS["exact"] = {**PRESETS["fast"], **PRESETS["exact"]}
+
+
+def _apply_preset(argv):
+    """Read --preset/--bench from argv (before argparse) and export env defaults."""
+    preset = "fast"
+    for i, a in enumerate(argv):
+        if a == "--preset" and i + 1 < len(argv):
+            preset = argv[i + 1]
+        elif a.startswith("--preset="):
+            preset = a.split("=", 1)[1]
+    if preset not in PRESETS:
+        sys.exit(f"--preset must be one of {sorted(PRESETS)}, got {preset!r}")
+    for k, v in PRESETS[preset].items():
+        os.environ.setdefault(k, v)
+    if "--bench" in argv:
+        os.environ.setdefault("LINGBOT_BENCH_TIMING", "1")
+    return preset
+
+
+PRESET = _apply_preset(sys.argv[1:])
+
 import wan
 from wan.configs import MAX_AREA_CONFIGS, SIZE_CONFIGS, SUPPORTED_SIZES, WAN_CONFIGS
 from wan.distributed.util import init_distributed_group
@@ -67,9 +109,20 @@ def _parse_args():
         description="Generate a image or video from a text prompt or image using Wan"
     )
     parser.add_argument(
+        "--preset",
+        type=str,
+        default="fast",
+        choices=sorted(PRESETS),
+        help="fast: 16.2 FPS stack on one RTX 5090 (default); exact: same with a bit-identical DiT (14.8 FPS); stock: upstream code path.")
+    parser.add_argument(
+        "--bench",
+        action="store_true",
+        default=False,
+        help="Print per-chunk generation time and the as-played FPS at the end.")
+    parser.add_argument(
         "--task",
         type=str,
-        default="i2v-A14B",
+        default="i2v-1.3B",
         choices=list(WAN_CONFIGS.keys()),
         help="The task to run.")
     parser.add_argument(
@@ -82,7 +135,7 @@ def _parse_args():
     parser.add_argument(
         "--size",
         type=str,
-        default="1280*720",
+        default="480*832",
         choices=list(SIZE_CONFIGS.keys()),
         help="The area (width*height) of the generated video. For the I2V task, the aspect ratio of the output video will follow that of the input image."
     )
@@ -100,12 +153,12 @@ def _parse_args():
     parser.add_argument(
         "--ckpt_dir",
         type=str,
-        default=None,
+        default="weights/lingbot-world-v2-1.3b-causal-fast",
         help="The path to the checkpoint directory.")
     parser.add_argument(
         "--assets_dir",
         type=str,
-        default=None,
+        default="weights/lingbot-world-v2-14b-causal-fast",
         help="Optional directory that holds shared T5 / VAE / tokenizer assets "
              "(used when the DiT checkpoint folder does not include them).")
     parser.add_argument(
@@ -172,12 +225,12 @@ def _parse_args():
     parser.add_argument(
         "--local_attn_size",
         type=int,
-        default=-1,
+        default=18,
         help='The local size of kv cache during inference')
     parser.add_argument(
         "--sink_size",
         type=int,
-        default=0,
+        default=6,
         help='The sink size of kv cache during inference')
     parser.add_argument(
         "--max_attention_size",
@@ -227,6 +280,8 @@ def run_causal(args, cfg, img, device, rank, mode="causal_fast"):
         assets_dir=args.assets_dir,
     )
     logging.info("Generating video ...")
+    global _PIPELINE
+    _PIPELINE = wan_i2v
     return wan_i2v.generate(
         args.prompt,
         img,
@@ -240,6 +295,30 @@ def run_causal(args, cfg, img, device, rank, mode="causal_fast"):
         max_attention_size=args.max_attention_size)
 
 
+_PIPELINE = None
+
+
+def _print_bench_summary(args, cfg):
+    """Steady-state chunk time (chunks 8+, or the last half) and FPS as played."""
+    chunk_s = getattr(_PIPELINE, "bench_chunk_s", [])
+    if not chunk_s:
+        print("BENCH: no chunk timings recorded (pass --bench)")
+        return
+    steady = chunk_s[7:] if len(chunk_s) > 8 else chunk_s[len(chunk_s) // 2:]
+    steady_med = sorted(steady)[len(steady) // 2]
+    frames_per_chunk = args.chunk_size * cfg.vae_stride[0]
+    vae_s = getattr(_PIPELINE, "bench_vae_decode_s", None)
+    n_frames = sum(1 for _ in chunk_s) * frames_per_chunk
+    print(f"BENCH preset={PRESET} chunks={len(chunk_s)} "
+          f"dit_s_per_chunk(first)={chunk_s[0]:.3f} steady_median={steady_med:.3f} "
+          f"-> denoise-loop FPS {frames_per_chunk / steady_med:.1f}")
+    if vae_s is not None:
+        dec_per_chunk = vae_s / len(chunk_s)
+        print(f"BENCH vae_decode_s_per_chunk={dec_per_chunk:.3f} "
+              f"-> as-played FPS {frames_per_chunk / (steady_med + dec_per_chunk):.1f} "
+              f"(real time = {cfg.sample_fps})")
+
+
 def generate(args):
     rank = int(os.getenv("RANK", 0))
     world_size = int(os.getenv("WORLD_SIZE", 1))
@@ -248,7 +327,8 @@ def generate(args):
     _init_logging(rank)
 
     if args.offload_model is None:
-        args.offload_model = False if world_size > 1 else True
+        # The DiT stays on the GPU; T5 is moved off after the prompt is encoded.
+        args.offload_model = False
         logging.info(
             f"offload_model is not specified, set to {args.offload_model}.")
     cfg = WAN_CONFIGS[args.task]
@@ -308,6 +388,9 @@ def generate(args):
             value_range=(-1, 1))
 
     del video
+
+    if args.bench and rank == 0:
+        _print_bench_summary(args, cfg)
 
     torch.cuda.synchronize()
     if dist.is_initialized():

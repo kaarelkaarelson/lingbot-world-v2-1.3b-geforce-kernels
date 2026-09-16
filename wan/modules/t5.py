@@ -484,14 +484,19 @@ class T5EncoderModel:
         self.checkpoint_path = checkpoint_path
         self.tokenizer_path = tokenizer_path
 
-        # init model
+        # Build on the meta device: random-initialising 5.7B params on CPU takes
+        # minutes, and every value is overwritten by the checkpoint anyway.
         model = umt5_xxl(
             encoder_only=True,
             return_tokenizer=False,
             dtype=dtype,
-            device=device).eval().requires_grad_(False)
+            device='meta').eval().requires_grad_(False)
         logging.info(f'loading {checkpoint_path}')
-        model.load_state_dict(torch.load(checkpoint_path, map_location='cpu'))
+        try:
+            state = torch.load(checkpoint_path, map_location='cpu', mmap=True)
+        except RuntimeError:  # legacy (non-zip) .pth cannot be mmapped
+            state = torch.load(checkpoint_path, map_location='cpu')
+        model.load_state_dict(state, assign=True)
         self.model = model
         if shard_fn is not None:
             self.model = shard_fn(self.model, sync_module_states=False)

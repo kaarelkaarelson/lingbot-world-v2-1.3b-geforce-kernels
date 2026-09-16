@@ -12,7 +12,17 @@ try:
 except ModuleNotFoundError:
     FLASH_ATTN_2_AVAILABLE = False
 
+import os
 import warnings
+
+# LINGBOT_ATTN=sage routes self-attention through SageAttention (INT8 QK,
+# FP8/FP16 PV) instead of FlashAttention-2. Only for the plain batched call
+# (no q_lens/k_lens), which is how the causal DiT calls it. sage_kvq keeps
+# this fallback; the fused causal DiT then bypasses attention() with its
+# pre-quantised KV cache (model_fast_fusion.py + sage_kvq.py).
+_SAGE = None
+if os.environ.get("LINGBOT_ATTN") in ("sage", "sage_kvq"):
+    from sageattention import sageattn as _SAGE
 
 __all__ = [
     'flash_attention',
@@ -144,6 +154,17 @@ def attention(
     dtype=torch.bfloat16,
     fa_version=None,
 ):
+    if _SAGE is not None and q_lens is None and k_lens is None and dropout_p == 0.:
+        _dump = os.environ.get("LINGBOT_DUMP_QKV")
+        if _dump and k.shape[1] >= 27000 and not os.path.exists(_dump):
+            # one full-window self-attention call (q/k/v as passed to Sage) for the KV-quant probe
+            torch.save({"q": q.detach().cpu(), "k": k.detach().cpu(), "v": v.detach().cpu()}, _dump)
+        # q/k/v: [B, L, H, D] == SageAttention's "NHD" layout. Cross-length
+        # (Lq != Lk) is fine without a causal mask, which is our case.
+        out_dtype = q.dtype
+        x = _SAGE(q.to(dtype), k.to(dtype), v.to(dtype), tensor_layout="NHD",
+                  is_causal=causal, sm_scale=softmax_scale)
+        return x.to(out_dtype)
     if FLASH_ATTN_2_AVAILABLE or FLASH_ATTN_3_AVAILABLE:
         return flash_attention(
             q=q,

@@ -17,66 +17,133 @@ from wan.modules.model import (
     sinusoidal_embedding_1d
 )
 
-from .attention import flash_attention
+from .attention import flash_attention, attention
 
-# LINGBOT_KV_RING=1: keep the local KV window as a ring buffer instead of
-# shifting it down on every eviction (two 12-frame clones per layer per forward
-# once the window is full).
-_KV_RING = os.environ.get("LINGBOT_KV_RING") == "1"
+# LINGBOT_XATTN=sage: cross-attention (6 032 q x 512 text kv, no key mask) through the
+# same SageAttention path as self-attention instead of FlashAttention-2.
+_XATTN_SAGE = os.environ.get("LINGBOT_XATTN") == "sage"
+
+# Verification switches (A/B against upstream latents):
+#   LINGBOT_DIT_FUSION_EXACT_T=1    time-embedding MLP on the L pre-expanded
+#                                   rows and e0 [B, L, 6, C] exactly as upstream
+#                                   (the 1-row MLP is the same maths through a
+#                                   different GEMM tiling, ~1 fp32 ulp)
+#   LINGBOT_DIT_FUSION_EXACT_ROPE=1 rope through the complex128 multiply as
+#                                   upstream instead of the fused real pairs
+#   LINGBOT_DIT_FUSION_ROPE=fp32c   rope apply in compensated fp32 (double-
+#                                   float products, no fp64 in the kernel;
+#                                   fp64 is 1/64 rate on the RTX 5090) — the
+#                                   fp64 (cos, sin) table is split once per
+#                                   forward into fp32 hi + lo parts
+_EXACT_T = os.environ.get("LINGBOT_DIT_FUSION_EXACT_T") == "1"
+_EXACT_ROPE = os.environ.get("LINGBOT_DIT_FUSION_EXACT_ROPE") == "1"
+_ROPE_FP32C = os.environ.get("LINGBOT_DIT_FUSION_ROPE") == "fp32c"
+
+# LINGBOT_ATTN=sage_kvq: self-attention on SageAttention's kernel with the K/V
+# cache kept pre-quantised (int8 K + fp8 V, see sage_kvq.py); the pipeline
+# allocates the buffers in each layer's cache dict.
+_SAGE_KVQ = os.environ.get("LINGBOT_ATTN") == "sage_kvq"
+if _SAGE_KVQ:
+    from . import sage_kvq
 
 
-def kv_ring_plan(kv_cache, current_start, num_new_tokens, sink_tokens):
-    """Plan where the chunk starting at `current_start` goes in every layer's
-    ring-buffered cache (Python ints, like the global_end_int pattern).
+def causal_rope_freqs(grid_sizes, freqs, start_frame=0):
+    r"""
+    Rotary multipliers for one forward, as real (cos, sin) tables. Computed
+    once per forward in the model and shared by every layer's q and k (the
+    original recomputed the complex table per layer per call).
 
-    Token t is stored at t while the cache fills, then at
-    sink_tokens + (t - sink_tokens) % window, so the new chunk overwrites the
-    oldest one. ring_tail_int < num_new_tokens means the chunk straddles the
-    ring end and its tail wraps to the window start.
+    Args:
+        grid_sizes: list of (F, H, W) Python ints, one per sample
+        freqs: [1024, C / num_heads / 2, 2] float64, view_as_real of the
+            polar rope table
+    Returns:
+        (cos, sin), each [B, L, 1, C / num_heads / 2] float64
     """
-    kv_cache_size = kv_cache[0]["k"].shape[1]
-    current_end = current_start + num_new_tokens
-    if current_end <= kv_cache_size:
-        start, tail, end = current_start, num_new_tokens, current_end
-    else:
-        window = kv_cache_size - sink_tokens
-        start = sink_tokens + (current_start - sink_tokens) % window
-        tail, end = min(num_new_tokens, kv_cache_size - start), kv_cache_size
-    for layer_cache in kv_cache:
-        layer_cache["ring_start_int"] = start
-        layer_cache["ring_tail_int"] = tail
-        layer_cache["ring_end_int"] = end
-
-
-def causal_rope_apply(x, grid_sizes, freqs, start_frame=0):
-    n, c = x.size(2), x.size(3) // 2
-
-    # split freqs
+    c = freqs.size(1)
     freqs = freqs.split([c - 2 * (c // 3), c // 3, c // 3], dim=1)
-
-    # loop over samples
     output = []
-
-    for i, (f, h, w) in enumerate(grid_sizes.tolist()):
-        seq_len = f * h * w
-
-        # precompute multipliers
-        x_i = torch.view_as_complex(x[i, :seq_len].to(torch.float64).reshape(
-            seq_len, n, -1, 2))
+    for f, h, w in grid_sizes:
         freqs_i = torch.cat([
-            freqs[0][start_frame:start_frame + f].view(f, 1, 1, -1).expand(f, h, w, -1),
-            freqs[1][:h].view(1, h, 1, -1).expand(f, h, w, -1),
-            freqs[2][:w].view(1, 1, w, -1).expand(f, h, w, -1)
+            freqs[0][start_frame:start_frame + f].view(f, 1, 1, -1, 2).expand(f, h, w, -1, -1),
+            freqs[1][:h].view(1, h, 1, -1, 2).expand(f, h, w, -1, -1),
+            freqs[2][:w].view(1, 1, w, -1, 2).expand(f, h, w, -1, -1)
         ],
-            dim=-1).reshape(seq_len, 1, -1)
+            dim=-2).reshape(f * h * w, 1, -1, 2)
+        output.append(freqs_i)
+    return torch.stack(output).unbind(-1)
 
-        # apply rotary embedding
-        x_i = torch.view_as_real(x_i * freqs_i).flatten(2)
-        x_i = torch.cat([x_i, x[i, seq_len:]])
 
-        # append to collection
-        output.append(x_i)
-    return torch.stack(output).type_as(x)
+def rope_fp32c_tables(rope):
+    r"""
+    (cos, sin) float64 -> ((cos_hi, cos_lo), (sin_hi, sin_lo)) float32 with
+    hi + lo == the float64 value to ~2^-48, computed once per forward.
+    """
+    out = []
+    for t in rope:
+        hi = t.float()
+        out.append((hi, (t - hi.double()).float()))
+    return out
+
+
+def _split(a):
+    # Veltkamp: a == hi + lo with hi on 12 significant bits (fp32)
+    t = a * 4097.0
+    hi = t - (t - a)
+    return hi, a - hi
+
+
+def _two_prod(a, b):
+    # Dekker: a * b == p + e exactly (torch has no fma)
+    p = a * b
+    ah, al = _split(a)
+    bh, bl = _split(b)
+    return p, ((ah * bh - p) + ah * bl + al * bh) + al * bl
+
+
+def _two_sum(a, b):
+    s = a + b
+    bb = s - a
+    return s, (a - (s - bb)) + (b - bb)
+
+
+def _rope_apply_fp32c(x, rope):
+    r"""
+    xr*cos - xi*sin and xr*sin + xi*cos as double-float sums: exact products
+    and sums in (value, error) pairs, the error terms plus the lo parts of the
+    table folded in last. ~48 bits of the fp64 result survive, so the bf16
+    (or fp32) output rounds the same way as the fp64 path except within
+    ~2^-45 of a rounding boundary (measured: 0 bf16 flips in 94 M elements).
+    """
+    (ch, cl), (sh, sl) = rope
+    xr, xi = x.float().unflatten(-1, (-1, 2)).unbind(-1)
+    pr1, er1 = _two_prod(xr, ch)
+    pr2, er2 = _two_prod(xi, sh)
+    pi1, ei1 = _two_prod(xr, sh)
+    pi2, ei2 = _two_prod(xi, ch)
+    sr, esr = _two_sum(pr1, -pr2)
+    si, esi = _two_sum(pi1, pi2)
+    re = sr + (esr + (er1 - er2) + (xr * cl - xi * sl))
+    im = si + (esi + (ei1 + ei2) + (xr * sl + xi * cl))
+    return torch.stack([re, im], dim=-1).flatten(-2).type_as(x)
+
+
+def causal_rope_apply(x, rope):
+    r"""
+    Same math as the complex form (x_i * freqs_i in float64, then cast back)
+    written on real pairs so Inductor fuses it with the surrounding casts.
+    `rope` is the (cos, sin) pair from `causal_rope_freqs`; x is [B, L, N, D].
+    """
+    if _ROPE_FP32C:
+        return _rope_apply_fp32c(x, rope)
+    cos, sin = rope
+    pairs = x.to(torch.float64).unflatten(-1, (-1, 2))
+    if _EXACT_ROPE:
+        out = torch.view_as_real(torch.view_as_complex(pairs) * torch.complex(cos, sin))
+    else:
+        xr, xi = pairs.unbind(-1)
+        out = torch.stack([xr * cos - xi * sin, xr * sin + xi * cos], dim=-1)
+    return out.flatten(-2).type_as(x)
 
 
 class CausalWanSelfAttention(nn.Module):
@@ -121,10 +188,9 @@ class CausalWanSelfAttention(nn.Module):
         r"""
         Args:
             x(Tensor): Shape [B, L, num_heads, C / num_heads]
-            grid_sizes(Tensor): Shape [B, 3], the second dimension contains (F, H, W)
-            freqs(Tensor): Rope freqs, shape [1024, C / num_heads / 2]
-            frame_seqlen(int, optional): Pre-computed H*W/(patch_h*patch_w). If
-                provided, skips a `.item()` sync on `grid_sizes`.
+            grid_sizes: list of (F, H, W) Python ints, one per sample
+            freqs: (cos, sin) rope tables for this chunk from `causal_rope_freqs`
+            frame_seqlen(int, optional): Pre-computed H*W/(patch_h*patch_w).
             seq_lens_int(int, optional): Accepted for signature parity with
                 the SP path (sp_attn_forward_causal). Unused here.
         """
@@ -141,10 +207,9 @@ class CausalWanSelfAttention(nn.Module):
         q, k, v = qkv_fn(x)
 
         if frame_seqlen is None:
-            frame_seqlen = math.prod(grid_sizes[0][1:]).item()
-        current_start_frame = current_start // frame_seqlen
-        roped_query = causal_rope_apply(q, grid_sizes, freqs, start_frame=current_start_frame).type_as(v)
-        roped_key = causal_rope_apply(k, grid_sizes, freqs, start_frame=current_start_frame).type_as(v)
+            frame_seqlen = grid_sizes[0][1] * grid_sizes[0][2]
+        roped_query = causal_rope_apply(q, freqs).type_as(v)
+        roped_key = causal_rope_apply(k, freqs).type_as(v)
         current_end = current_start + roped_query.shape[1]
         sink_tokens = self.sink_size * frame_seqlen
         # If we are using local attention and the current KV cache size is larger than the local attention size, we need to truncate the KV cache
@@ -170,24 +235,6 @@ class CausalWanSelfAttention(nn.Module):
             local_start_index = current_start
             kv_cache["k"][:, local_start_index:local_end_index] = roped_key
             kv_cache["v"][:, local_start_index:local_end_index] = v
-        elif _KV_RING:
-            # Ring buffer over the window [sink_tokens, kv_cache_size); the
-            # slot comes from kv_ring_plan (pipeline, once per chunk) and the
-            # chunk overwrites the oldest one, nothing is shifted. The
-            # attended set [0:local_end_index] is the same as with shifting,
-            # only in rotated order; attention is unmasked so the order is
-            # irrelevant (up to fp summation order).
-            assert max_attention_size >= kv_cache_size
-            local_start_index = kv_cache["ring_start_int"]
-            n_tail = kv_cache["ring_tail_int"]
-            kv_cache["k"][:, local_start_index:local_start_index + n_tail] = roped_key[:, :n_tail]
-            kv_cache["v"][:, local_start_index:local_start_index + n_tail] = v[:, :n_tail]
-            if n_tail < num_new_tokens:
-                # Chunk straddles the ring end (every third chunk with a
-                # 6-frame sink and 4-frame chunks): tail wraps to the start.
-                kv_cache["k"][:, sink_tokens:sink_tokens + num_new_tokens - n_tail] = roped_key[:, n_tail:]
-                kv_cache["v"][:, sink_tokens:sink_tokens + num_new_tokens - n_tail] = v[:, n_tail:]
-            local_end_index = kv_cache["ring_end_int"]
         elif (current_end > global_end) and (
                 num_new_tokens + local_end > kv_cache_size):
             # Calculate the number of new tokens added in this step
@@ -211,9 +258,20 @@ class CausalWanSelfAttention(nn.Module):
             kv_cache["k"][:, local_start_index:local_end_index] = roped_key
             kv_cache["v"][:, local_start_index:local_end_index] = v
 
-        k_cache = kv_cache["k"][:, max(0, local_end_index - max_attention_size):local_end_index]
-        v_cache = kv_cache["v"][:, max(0, local_end_index - max_attention_size):local_end_index]
-        x = attention(roped_query, k_cache, v_cache)
+        if _SAGE_KVQ:
+            assert local_end_index <= max_attention_size
+            # Full re-quant (fresh km / V scale) on a chunk's first forward:
+            # the eviction shift above regrouped the 64-token blocks. The
+            # other forwards rewrite only the current chunk's blocks.
+            if current_end > global_end:
+                sage_kvq.requant_all(kv_cache, local_end_index)
+            else:
+                sage_kvq.write_chunk(kv_cache, local_start_index, local_end_index)
+            x = sage_kvq.attend(roped_query, kv_cache, local_end_index)
+        else:
+            k_cache = kv_cache["k"][:, max(0, local_end_index - max_attention_size):local_end_index]
+            v_cache = kv_cache["v"][:, max(0, local_end_index - max_attention_size):local_end_index]
+            x = attention(roped_query, k_cache, v_cache)
 
         kv_cache["global_end_int"] = current_end
         kv_cache["local_end_int"] = local_end_index
@@ -264,7 +322,10 @@ class WanCrossAttention(WanSelfAttention):
             v = self.v(context).view(b, -1, n, d)
 
         # compute attention
-        x = flash_attention(q, k, v, k_lens=context_lens)
+        if _XATTN_SAGE and context_lens is None:
+            x = attention(q, k, v)  # LINGBOT_ATTN=sage routes this through SageAttention
+        else:
+            x = flash_attention(q, k, v, k_lens=context_lens)
 
         # output
         x = x.flatten(2)
@@ -334,13 +395,19 @@ class CausalWanAttentionBlock(nn.Module):
         frame_seqlen=None,
         cross_attn_first_call=None,
         seq_lens_int=None,
+        cam_cache=None,
+        cam_first_call=None,
     ):
         r"""
         Args:
             x(Tensor): Shape [B, L, C]
-            e(Tensor): Shape [B, F, 6, C]
-            grid_sizes(Tensor): Shape [B, 3], the second dimension contains (F, H, W)
-            freqs(Tensor): Rope freqs, shape [1024, C / num_heads / 2]
+            e(Tensor): Shape [B, 1, 6, C] (or [B, L, 6, C]); broadcast over L
+            grid_sizes: list of (F, H, W) Python ints, one per sample
+            freqs: (cos, sin) rope tables for this chunk from `causal_rope_freqs`
+            cam_cache(dict, optional): per-layer ``scale``/``shift`` buffers
+                [B, L, C]. The camera MLP depends only on the chunk's poses, so
+                it is computed on the chunk's first forward (``cam_first_call``)
+                and read back on the other forwards of the chunk.
         """
         assert e.dtype == torch.float32
         with torch.amp.autocast('cuda', dtype=torch.float32):
@@ -356,11 +423,17 @@ class CausalWanAttentionBlock(nn.Module):
 
         # cam injection (only if dit_cond_dict is provided and contains c2ws_plucker_emb)
         if dit_cond_dict is not None and "c2ws_plucker_emb" in dit_cond_dict:
-            c2ws_plucker_emb = dit_cond_dict["c2ws_plucker_emb"]
-            c2ws_hidden_states = self.cam_injector_layer2(torch_F.silu(self.cam_injector_layer1(c2ws_plucker_emb)))
-            c2ws_hidden_states = c2ws_hidden_states + c2ws_plucker_emb
-            cam_scale = self.cam_scale_layer(c2ws_hidden_states)
-            cam_shift = self.cam_shift_layer(c2ws_hidden_states)
+            if cam_cache is not None and not cam_first_call:
+                cam_scale, cam_shift = cam_cache["scale"], cam_cache["shift"]
+            else:
+                c2ws_plucker_emb = dit_cond_dict["c2ws_plucker_emb"]
+                c2ws_hidden_states = self.cam_injector_layer2(torch_F.silu(self.cam_injector_layer1(c2ws_plucker_emb)))
+                c2ws_hidden_states = c2ws_hidden_states + c2ws_plucker_emb
+                cam_scale = self.cam_scale_layer(c2ws_hidden_states)
+                cam_shift = self.cam_shift_layer(c2ws_hidden_states)
+                if cam_cache is not None:
+                    cam_cache["scale"].copy_(cam_scale)
+                    cam_cache["shift"].copy_(cam_shift)
             x = (1.0 + cam_scale) * x + cam_shift
 
         # cross-attention & ffn function
@@ -401,7 +474,7 @@ class CausalHead(nn.Module):
         r"""
         Args:
             x(Tensor): Shape [B, L1, C]
-            e(Tensor): Shape [B, L1, C]
+            e(Tensor): Shape [B, 1, C] (or [B, L1, C]); broadcast over L1
         """
         assert e.dtype == torch.float32
         with torch.amp.autocast('cuda', dtype=torch.float32):
@@ -529,14 +602,16 @@ class WanModelFast(ModelMixin, ConfigMixin):
         self.head = CausalHead(dim, out_dim, patch_size, eps)
 
         # buffers (don't use register_buffer otherwise dtype will be changed in to())
+        # Kept as real (cos, sin) pairs [1024, d/2, 2]: Inductor has no
+        # complex kernels, so the rope maths runs on the real parts.
         assert (dim % num_heads) == 0 and (dim // num_heads) % 2 == 0
         d = dim // num_heads
-        self.freqs = torch.cat([
+        self.freqs = torch.view_as_real(torch.cat([
             rope_params(1024, d - 4 * (d // 6)),
             rope_params(1024, 2 * (d // 6)),
             rope_params(1024, 2 * (d // 6))
         ],
-            dim=1)
+            dim=1))
 
         # initialize weights
         self.init_weights()
@@ -555,6 +630,8 @@ class WanModelFast(ModelMixin, ConfigMixin):
         max_attention_size=1_000_000,
         frame_seqlen=None,
         cross_attn_first_call=None,
+        cam_cache=None,
+        cam_first_call=None,
     ):
         r"""
         Run the diffusion model with kv caching.
@@ -589,6 +666,9 @@ class WanModelFast(ModelMixin, ConfigMixin):
             max_attention_size (`int`, *optional*, defaults to 1_000_000):
                 Maximum number of KV tokens each query can attend to. Limits the
                 effective context window of self-attention to control memory usage.
+            cam_cache (`list[dict]`, *optional*, defaults to None):
+                Per-layer camera-modulation cache (``scale``/``shift`` [B, L, C]),
+                filled when ``cam_first_call`` is True and read otherwise.
 
         Returns:
             List[Tensor]:
@@ -606,38 +686,45 @@ class WanModelFast(ModelMixin, ConfigMixin):
         if y is not None:
             x = [torch.cat([u, v], dim=0) for u, v in zip(x, y)]
 
-        # embeddings
+        # embeddings. Grid sizes and sequence lengths stay Python ints (no
+        # tensor round-trips): Dynamo traces them symbolically instead of
+        # breaking the graph on .tolist()/.item().
         x = [self.patch_embedding(u.unsqueeze(0)) for u in x]
-        grid_sizes = torch.stack(
-            [torch.tensor(u.shape[2:], dtype=torch.long) for u in x])
+        grid_sizes = [tuple(u.shape[2:]) for u in x]
         x = [u.flatten(2).transpose(1, 2) for u in x]
-        seq_lens = torch.tensor([u.size(1) for u in x], dtype=torch.long)
-        assert seq_lens.max() <= seq_len
+        seq_lens = [u.size(1) for u in x]
+        assert max(seq_lens) <= seq_len
         x = torch.cat(x)
 
-        # time embeddings
+        # time embeddings. One timestep per sample: embed it once ([B, 1, C])
+        # and let the blocks broadcast over the tokens instead of running the
+        # MLP on L identical rows.
         if t.dim() == 1:
-            t = t.expand(t.size(0), seq_lens)
+            t = t.expand(t.size(0), seq_lens[0]) if _EXACT_T else t.unsqueeze(1)
         with torch.amp.autocast('cuda', dtype=torch.float32):
-            bt = t.size(0)
+            bt, lt = t.shape
             t = t.flatten()
             e = self.time_embedding(
                 sinusoidal_embedding_1d(self.freq_dim,
-                                        t).unflatten(0, (bt, seq_lens)).float())
+                                        t).unflatten(0, (bt, lt)).float())
             e0 = self.time_projection(e).unflatten(2, (6, self.dim))
             assert e.dtype == torch.float32 and e0.dtype == torch.float32
 
         # context
         context_lens = None
-        context = self.text_embedding(
-            torch.stack([
-                torch.cat(
-                    [u, u.new_zeros(self.text_len - u.size(0), u.size(1))])
-                for u in context
-            ]))
+        context = self._embed_context(context)
 
-        # cam
-        if dit_cond_dict is not None and "c2ws_plucker_emb" in dit_cond_dict:
+        # rope tables for this chunk, shared by all layers
+        if frame_seqlen is None:
+            frame_seqlen = grid_sizes[0][1] * grid_sizes[0][2]
+        rope = causal_rope_freqs(grid_sizes, self.freqs,
+                                 start_frame=current_start // frame_seqlen)
+        if _ROPE_FP32C:
+            rope = rope_fp32c_tables(rope)
+
+        # cam (skipped when the blocks will read their cam_cache)
+        if (dit_cond_dict is not None and "c2ws_plucker_emb" in dit_cond_dict
+                and (cam_cache is None or cam_first_call)):
             c2ws_plucker_emb = dit_cond_dict["c2ws_plucker_emb"]
             c2ws_plucker_emb = [
                 rearrange(
@@ -662,13 +749,14 @@ class WanModelFast(ModelMixin, ConfigMixin):
             e=e0,
             seq_lens=seq_lens,
             grid_sizes=grid_sizes,
-            freqs=self.freqs,
+            freqs=rope,
             context=context,
             context_lens=context_lens,
             dit_cond_dict=dit_cond_dict,
             max_attention_size=max_attention_size,
             frame_seqlen=frame_seqlen,
-            cross_attn_first_call=cross_attn_first_call)
+            cross_attn_first_call=cross_attn_first_call,
+            cam_first_call=cam_first_call)
 
         for block_index, block in enumerate(self.blocks):
             kwargs.update(
@@ -676,6 +764,7 @@ class WanModelFast(ModelMixin, ConfigMixin):
                     "kv_cache": kv_cache[block_index],
                     "crossattn_cache": crossattn_cache[block_index],
                     "current_start": current_start,
+                    "cam_cache": None if cam_cache is None else cam_cache[block_index],
                 }
             )
             x = block(x, **kwargs)
@@ -688,6 +777,28 @@ class WanModelFast(ModelMixin, ConfigMixin):
 
         return [u.float() for u in x]
 
+    def _embed_context(self, context):
+        return self.text_embedding(
+            torch.stack([
+                torch.cat(
+                    [u, u.new_zeros(self.text_len - u.size(0), u.size(1))])
+                for u in context
+            ]))
+
+    @torch.no_grad()
+    def init_crossattn_cache(self, context, crossattn_cache):
+        r"""
+        Fill every layer's cross-attention K/V cache from the text context once
+        per generation, so no forward needs the first-call branch (a Python
+        bool the compiled graph would otherwise specialise on).
+        """
+        context = self._embed_context(context)
+        for block, cache in zip(self.blocks, crossattn_cache):
+            attn = block.cross_attn
+            b, n, d = context.size(0), attn.num_heads, attn.head_dim
+            cache["k"].copy_(attn.norm_k(attn.k(context)).view(b, -1, n, d))
+            cache["v"].copy_(attn.v(context).view(b, -1, n, d))
+            cache["is_init"].fill_(1)
 
     def unpatchify(self, x, grid_sizes):
         r"""
@@ -696,9 +807,9 @@ class WanModelFast(ModelMixin, ConfigMixin):
         Args:
             x (List[Tensor]):
                 List of patchified features, each with shape [L, C_out * prod(patch_size)]
-            grid_sizes (Tensor):
+            grid_sizes (list[tuple[int, int, int]]):
                 Original spatial-temporal grid dimensions before patching,
-                    shape [B, 3] (3 dimensions correspond to F_patches, H_patches, W_patches)
+                    (F_patches, H_patches, W_patches) per sample
 
         Returns:
             List[Tensor]:
@@ -707,7 +818,7 @@ class WanModelFast(ModelMixin, ConfigMixin):
 
         c = self.out_dim
         out = []
-        for u, v in zip(x, grid_sizes.tolist()):
+        for u, v in zip(x, grid_sizes):
             u = u[:math.prod(v)].view(*v, *self.patch_size, c)
             u = torch.einsum('fhwpqrc->cfphqwr', u)
             u = u.reshape(c, *[i * j for i, j in zip(v, self.patch_size)])

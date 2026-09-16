@@ -21,7 +21,16 @@ from tqdm import tqdm
 from .distributed.fsdp import shard_model
 from .distributed.sequence_parallel import sp_attn_forward_causal, sp_dit_forward_causal
 from .distributed.util import get_world_size
-from .modules.model_fast import WanModelFast
+from .modules.model_fast import kv_ring_plan
+_SAGE_KVQ = os.environ.get("LINGBOT_ATTN") == "sage_kvq"
+if _SAGE_KVQ:
+    from .modules import sage_kvq
+if os.environ.get("LINGBOT_DIT_FUSION") == "1":
+    # Graph-break-free DiT (one Dynamo graph per forward, rope table per
+    # forward, cam-MLP and cross-attn K/V cached per chunk / generation).
+    from .modules.model_fast_fusion import WanModelFast
+else:
+    from .modules.model_fast import WanModelFast
 from .modules.model_causal import WanModelCausal
 from .modules.t5 import T5EncoderModel
 from .modules.vae2_1 import Wan2_1_VAE
@@ -69,10 +78,11 @@ def _resolve_dit_dir(checkpoint_dir, subfolder):
     return checkpoint_dir
 
 
-def _load_safetensors_state_dict(dit_dir):
+def _load_safetensors_state_dict(dit_dir, device="cpu"):
     """Load a (possibly sharded) safetensors dump from ``dit_dir``."""
     from safetensors.torch import load_file
 
+    device = str(device)
     for index_name in (
             "model.safetensors.index.json",
             "diffusion_pytorch_model.safetensors.index.json",
@@ -84,7 +94,7 @@ def _load_safetensors_state_dict(dit_dir):
             index = json.load(f)
         state = {}
         for shard in sorted(set(index["weight_map"].values())):
-            state.update(load_file(os.path.join(dit_dir, shard)))
+            state.update(load_file(os.path.join(dit_dir, shard), device=device))
         return state
 
     for single_name in (
@@ -93,12 +103,54 @@ def _load_safetensors_state_dict(dit_dir):
     ):
         single_path = os.path.join(dit_dir, single_name)
         if os.path.isfile(single_path):
-            return load_file(single_path)
+            return load_file(single_path, device=device)
 
     raise FileNotFoundError(
         f"No safetensors weights found in {dit_dir}. Expected a sharded "
         "index (model.safetensors.index.json) or a single model.safetensors."
     )
+
+
+class FP8Linear(torch.nn.Module):
+    """nn.Linear replacement: rowwise e4m3 weight, dynamic rowwise e4m3
+    activations, fp32-accumulate GEMM via torch._scaled_mm, bf16 output."""
+
+    FMAX = torch.finfo(torch.float8_e4m3fn).max
+
+    def __init__(self, lin):
+        super().__init__()
+        w = lin.weight.detach()
+        w_scale = (w.abs().amax(dim=1, keepdim=True).float() / self.FMAX).clamp(min=1e-12)  # [N,1]
+        self.register_buffer("w8", (w.float() / w_scale).to(torch.float8_e4m3fn))            # [N,K]
+        self.register_buffer("w_scale_t", w_scale.t().contiguous())                           # [1,N]
+        self.bias = lin.bias
+
+    def forward(self, x):
+        shape = x.shape
+        x2 = x.reshape(-1, shape[-1])
+        x_scale = (x2.abs().amax(dim=1, keepdim=True).float() / self.FMAX).clamp(min=1e-12)   # [M,1]
+        x8 = (x2.float() / x_scale).to(torch.float8_e4m3fn)
+        y = torch._scaled_mm(x8, self.w8.t(), scale_a=x_scale, scale_b=self.w_scale_t,
+                             bias=None if self.bias is None else self.bias.to(torch.bfloat16),
+                             out_dtype=torch.bfloat16)
+        return y.reshape(*shape[:-1], y.shape[-1])
+
+
+def _inductor_tune():
+    """LINGBOT_INDUCTOR_TUNE=1: Inductor knobs for the memory-bound Triton
+    kernels (LN/modulation/quant reductions over 1536- and 8960-wide rows).
+    multi_kernel benchmarks persistent vs looped reductions and
+    coordinate_descent_tuning tunes block sizes at first compile; the
+    reduction order may change -> fp32-ulp differences, not bitwise.
+    realize_reads_threshold: the norm2 LN+modulation output (6 reads) is
+    realised and its FP8 quant lands in a second kernel, unlike norm1's;
+    keeping it inlined lets the amax fuse (same values, recomputed instead
+    of stored)."""
+    import torch._inductor.config as inductor_config
+    inductor_config.triton.multi_kernel = 1
+    inductor_config.coordinate_descent_tuning = True
+    inductor_config.realize_reads_threshold = 8
+    logging.info("Inductor: multi_kernel=1, coordinate_descent_tuning, realize_reads_threshold=8")
 
 
 def _dit_kwargs_from_config(config, extra=None):
@@ -124,7 +176,7 @@ def _dit_kwargs_from_config(config, extra=None):
 
 
 def load_dit_model(model_cls, checkpoint_dir, subfolder, config, torch_dtype,
-                   extra=None):
+                   extra=None, device="cpu"):
     """Load a DiT from ``transformers/`` or the checkpoint root.
 
     Uses ``from_pretrained`` when ``config.json`` is present. Otherwise builds
@@ -142,8 +194,12 @@ def load_dit_model(model_cls, checkpoint_dir, subfolder, config, torch_dtype,
         f"config.json not found in {dit_dir}; building {model_cls.__name__} "
         "from the task config and loading safetensors weights."
     )
-    model = model_cls(**_dit_kwargs_from_config(config, extra))
-    state = _load_safetensors_state_dict(dit_dir)
+    # Build directly on the target device: random init of 1.3B params is
+    # ~1 s on the GPU vs minutes on a contended CPU, and the weights then
+    # load straight there instead of CPU -> cast -> copy.
+    with torch.device(device):
+        model = model_cls(**_dit_kwargs_from_config(config, extra))
+    state = _load_safetensors_state_dict(dit_dir, device=device)
     missing, unexpected = model.load_state_dict(state, strict=False)
     if missing:
         logging.warning(f"Missing keys when loading DiT: {missing}")
@@ -229,7 +285,9 @@ class WanI2VCausal:
             self.init_on_cpu = False
 
         shard_fn = partial(shard_model, device_id=device_id)
-        self.text_encoder = T5EncoderModel(
+        # T5 is built lazily: prompt embeddings are cached on disk, so the
+        # 11 GB encoder is only constructed for a prompt nobody has encoded yet.
+        self._t5_kwargs = dict(
             text_len=config.text_len,
             dtype=config.t5_dtype,
             device=torch.device('cpu'),
@@ -239,14 +297,56 @@ class WanI2VCausal:
                 config.t5_tokenizer, checkpoint_dir, assets_dir),
             shard_fn=shard_fn if t5_fsdp else None,
         )
+        self.text_encoder = None
+        self._t5_disk_cache_dir = os.path.join(assets_dir or checkpoint_dir, "t5_cache")
 
         self.vae_stride = config.vae_stride
         self.patch_size = config.patch_size
+        # Exp. 9 "quality mode": the stock VAE runs fp32; fp16 is 72 dB vs fp32 and
+        # 1.35x faster, channels_last_3d removes cuDNN's NCHW<->NHWC transposes (1.45x).
+        vae_dtype = {"fp16": torch.float16, "bf16": torch.bfloat16}.get(
+            os.environ.get("LINGBOT_VAE_DTYPE", ""), torch.float)
         self.vae = Wan2_1_VAE(
             vae_pth=_resolve_asset_path(
                 config.vae_checkpoint, checkpoint_dir, assets_dir),
+            dtype=vae_dtype,
             device=self.device)
+        self._vae_cl = os.environ.get("LINGBOT_VAE_CL") == "1"
+        # exp. 9c: true fp16 weights without autocast (autocast keeps norm/SiLU/residual in
+        # fp32: 0.78 -> 0.60 s/chunk), Conv2d channels_last too (0 transpose kernels), and
+        # torch.compile with the recompile limit raised (default 8 is exhausted by the
+        # shared CausalConv3d/RMS_norm/Resample code objects -> silent eager fallback).
+        self._vae_half = os.environ.get("LINGBOT_VAE_HALF") == "1"
+        if self._vae_half:
+            self.vae.model.decoder.half(); self.vae.model.conv2.half()
+        if self._vae_cl:
+            for mod in self.vae.model.decoder.modules():
+                if isinstance(mod, torch.nn.Conv3d):
+                    mod.weight.data = mod.weight.data.contiguous(memory_format=torch.channels_last_3d)
+                elif isinstance(mod, torch.nn.Conv2d):
+                    mod.weight.data = mod.weight.data.contiguous(memory_format=torch.channels_last)
+        if os.environ.get("LINGBOT_VAE_COMPILE") == "1":
+            torch._dynamo.config.recompile_limit = 64
+            self.vae.model.decoder = torch.compile(self.vae.model.decoder, dynamic=True)
+        if vae_dtype != torch.float or self._vae_cl or self._vae_half:
+            logging.info(f"Wan VAE decoder: dtype={vae_dtype}, half={self._vae_half}, channels_last={self._vae_cl}, "
+                         f"compile={os.environ.get('LINGBOT_VAE_COMPILE') == '1'}")
+        # Exp. 11: functional-cache driver of the same decoder, one static graph per latent
+        # step, so torch.compile fuses the elementwise work that the list cache blocks.
+        # LINGBOT_VAE_FUSED: '1' = max-autotune-no-cudagraphs, 'eager', or a torch.compile mode.
+        self._vae_fused = None
+        fused = os.environ.get("LINGBOT_VAE_FUSED")
+        if fused:
+            from .modules.vae2_1_fused import FusedDecoder
+            mode = {"1": "max-autotune-no-cudagraphs", "eager": None}.get(fused, fused)
+            self._vae_fused = FusedDecoder(self.vae, compile_mode=mode)
+            logging.info(f"Wan VAE fused decoder enabled (compile={mode})")
+        # stream/live.py: with LINGBOT_VAE_STREAM=1, each decoded chunk is handed to
+        # frame_sink(chunk_id, frames[C,F,H,W] in [-1,1], vae_stream, chunk_gen_start)
+        # on the VAE stream instead of being kept for the whole-clip video.
+        self.frame_sink = None
 
+        dit_device = torch.device('cpu') if (dit_fsdp or use_sp) else self.device
         if self.infer_mode == "causal_fast":
             self.model = load_dit_model(
                 WanModelFast,
@@ -257,6 +357,7 @@ class WanI2VCausal:
                 extra=dict(
                     local_attn_size=self.local_attn_size,
                     sink_size=self.sink_size),
+                device=dit_device,
             )
         else:
             self.model = load_dit_model(
@@ -265,6 +366,7 @@ class WanI2VCausal:
                 config.causal_checkpoint,
                 config,
                 torch.bfloat16,
+                device=dit_device,
             )
 
         self.model = self._configure_model(
@@ -273,6 +375,80 @@ class WanI2VCausal:
             dit_fsdp=dit_fsdp,
             shard_fn=shard_fn,
             convert_model_dtype=convert_model_dtype).to(self.device)
+
+        # Optional rowwise FP8 for the large Linears. Plain buffers +
+        # torch._scaled_mm (no tensor subclass: torchao's Float8Tensor breaks
+        # Dynamo guards under dynamic=True). Needs torch.compile to fuse the
+        # activation quantisation; eager FP8 is slower than bf16 on this card.
+        if os.environ.get("LINGBOT_FP8") == "1":
+            # Blocks only: the time-embedding MLP and head must stay fp32/bf16.
+            n_all, n_fp8 = 0, 0
+            for parent in list(self.model.blocks.modules()):
+                for name, m in list(parent.named_children()):
+                    if not isinstance(m, torch.nn.Linear):
+                        continue
+                    n_all += 1
+                    if (m.in_features >= 1024 and m.out_features >= 1024
+                            and m.in_features % 16 == 0 and m.out_features % 16 == 0):
+                        setattr(parent, name, FP8Linear(m))
+                        n_fp8 += 1
+            logging.info(f"FP8 rowwise enabled on {n_fp8} of {n_all} Linear layers")
+
+        compile_mode = os.environ.get("LINGBOT_TORCH_COMPILE")
+        if compile_mode and os.environ.get("LINGBOT_INDUCTOR_TUNE") == "1":
+            _inductor_tune()
+        if compile_mode == "regional":
+            # One graph per block, reused by all 30: same in-block fusion as
+            # the whole-model graph at a fraction of the compile time.
+            for i, block in enumerate(self.model.blocks):
+                self.model.blocks[i] = torch.compile(block, dynamic=True)
+            logging.info("torch.compile enabled (regional, per block)")
+        elif compile_mode:
+            # dynamic=True: current_start and the KV-cache slice bounds are
+            # Python ints that change every chunk; specialising on them would
+            # recompile per chunk and trip Dynamo's recompile limit.
+            self.model = torch.compile(
+                self.model, dynamic=True,
+                mode=None if compile_mode == "1" else compile_mode)
+            logging.info(f"torch.compile enabled (mode={compile_mode})")
+
+        # Optional tiny decoder (madebyollin/taehv, taew2_1 weights) in place
+        # of the Wan VAE decoder. It takes the model-space x0 latents directly:
+        # applying the Wan VAE mean/std first is wrong (oversaturated output).
+        taehv_path = os.environ.get("LINGBOT_TAEHV")
+        self._taehv = None
+        if taehv_path:
+            from .modules.taehv import TAEHV
+            self._taehv = TAEHV(checkpoint_path=taehv_path).to(self.device, torch.float16).eval()
+            logging.info(f"TAEHV decoder enabled from {taehv_path}")
+
+        # Optional Flash-VAED (arXiv 2602.19161) pruned/distilled Wan 2.1 decoder:
+        # same latent contract as Wan2_1_VAE.decode (model-space latents in,
+        # [C,T,H,W] in [-1,1] out), ~6x faster than the full decoder.
+        self._flashvaed = None
+        fv_path = os.environ.get("LINGBOT_FLASHVAED")
+        if fv_path:
+            import importlib.util
+            repo = os.environ.get("LINGBOT_FLASHVAED_REPO", "/workspace/Flash-VAED")
+            spec = importlib.util.spec_from_file_location(
+                "flash_vaed_wan_student", os.path.join(repo, "models", "wan", "model_hybrid_aggressive.py"))
+            mod = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(mod)
+            self._flashvaed = mod.WanVAE(vae_pth=fv_path, device=self.device, dtype=torch.bfloat16)
+            res = self._flashvaed.model.load_state_dict(
+                torch.load(fv_path, map_location="cpu", weights_only=True), strict=False)
+            missing = [k for k in res.missing_keys if not k.startswith("encoder")]
+            assert not missing, f"Flash-VAED checkpoint is missing decoder weights: {missing[:5]}"
+            # Its decode() hard-codes a cache reset at latent 20 (the paper's 21-latent
+            # clip), which drops 3 frames and misaligns everything after. The decoder is
+            # a pure causal-conv stack, so an uninterrupted cache is exact (measured
+            # identical to 21-latent windows with re-warm); window>0 keeps that scheme
+            # as an option, re-warming with the previous window's last `warm` latents.
+            self._flashvaed_window = int(os.environ.get("LINGBOT_FLASHVAED_WINDOW", "0"))
+            self._flashvaed_warm = int(os.environ.get("LINGBOT_FLASHVAED_WARM", "4"))
+            assert self._flashvaed_warm >= 1
+            logging.info(f"Flash-VAED decoder enabled from {fv_path} "
+                         f"(window={self._flashvaed_window or 'continuous'}, warm={self._flashvaed_warm})")
 
         self.scheduler = FlowUniPCMultistepScheduler(
             num_train_timesteps=self.num_train_timesteps,
@@ -388,6 +564,8 @@ class WanI2VCausal:
             shape=[1, text_seq_len, cfg.num_heads, head_dim],
             dtype=transformer_dtype,
             device=self.device)
+        if os.environ.get("LINGBOT_KV_RING") == "1":
+            kv_ring_plan(warmup_self_kv, 0, max_seq_len, self.sink_size * frame_seqlen)
 
         # `y` is concat([msk_4ch, vae_latent_16ch]) → 20 channels; combined
         # with latent's 16 ch at patch-embed concat, the DiT sees 36 ch in.
@@ -445,6 +623,42 @@ class WanI2VCausal:
              dummy_c2ws, dummy_context, dummy_t)
         torch.cuda.empty_cache()
         self._warmed = True
+
+    def _encode_prompts(self, prompts, offload_model):
+        """T5-encode ``prompts`` via the in-memory and on-disk caches.
+
+        Returns one context list per prompt, on ``self.device``. The encoder
+        is only instantiated when a prompt misses both caches.
+        """
+        out, missing = {}, []
+        for p in prompts:
+            key = hashlib.sha256(p.encode('utf-8')).hexdigest()
+            path = os.path.join(self._t5_disk_cache_dir, key + '.pt')
+            if key in self._t5_cache:
+                out[p] = self._t5_cache[key]
+            elif os.path.isfile(path):
+                out[p] = [t.to(self.device) for t in torch.load(path, map_location='cpu')]
+                self._t5_cache[key] = out[p]
+            else:
+                missing.append((p, key, path))
+        if missing:
+            if self.text_encoder is None:
+                self.text_encoder = T5EncoderModel(**self._t5_kwargs)
+            if not self.t5_cpu:
+                self.text_encoder.model.to(self.device)
+            enc_device = torch.device('cpu') if self.t5_cpu else self.device
+            os.makedirs(self._t5_disk_cache_dir, exist_ok=True)
+            for p, key, path in missing:
+                context = [t.to(self.device) for t in self.text_encoder([p], enc_device)]
+                torch.save([t.cpu() for t in context], path)
+                self._t5_cache[key] = context
+                out[p] = context
+            if not self.t5_cpu:
+                # T5-XXL is 11 GB; keep it off the GPU once the prompt is cached
+                # so the DiT loop has the card to itself.
+                self.text_encoder.model.cpu()
+                torch.cuda.empty_cache()
+        return [out[p] for p in prompts]
 
     def _configure_model(self, model, use_sp, dit_fsdp, shard_fn,
                          convert_model_dtype):
@@ -512,6 +726,66 @@ class WanI2VCausal:
 
         return x0_pred.to(original_dtype)
 
+    def _syncfree_schedule(self, timesteps, dit_fusion):
+        """
+        LINGBOT_SYNCFREE: everything the denoising loop reads from the
+        scheduler, resolved once per generate() and kept on the device, so no
+        forward pays a pageable H2D copy (`.to(device)` of a CPU scalar syncs
+        the stream), `nonzero` or `.item()`. The lookups reproduce the eager
+        path exactly: `_convert_flow_pred_to_x0` takes the *first* schedule
+        entry equal to the int64 timestep (argmin), `add_noise` the *second*
+        (`index_for_timestep`) when the truncated timestep repeats — they are
+        different sigmas near sigma = 1.
+        """
+        sched, n = self.scheduler, len(timesteps)
+        x0_idx = [int(torch.argmin((sched.timesteps.double() - t).abs())) for t in timesteps]
+        noise_idx = [sched.index_for_timestep(t) for t in timesteps[1:]]
+        t_dev = timesteps.to(self.device)
+        return dict(
+            # fresh contiguous [1] tensors, as torch.stack(...).to(device) gave
+            t=[t_dev[i:i + 1].clone() for i in range(n)],
+            t_zero=t_dev[-1:] * (0 if dit_fusion else 0.0),
+            sigma_x0=sched.sigmas.double()[x0_idx].reshape(n, 1, 1, 1, 1).to(self.device),
+            sigma_noise=sched.sigmas[noise_idx].reshape(n - 1, 1, 1, 1, 1).to(self.device),
+        )
+
+
+    def _wanvae_decode(self, z):
+        """Stock Wan2_1_VAE.decode loop with channels_last_3d inputs (same numerics; the
+        stock decode() slices NCHW views, which makes cuDNN transpose every conv)."""
+        vae, m = self.vae, self.vae.model
+        with torch.amp.autocast("cuda", dtype=vae.dtype, enabled=vae.dtype != torch.float32 and not self._vae_half):
+            m.clear_cache()
+            zz = z.unsqueeze(0) / vae.scale[1].float().view(1, -1, 1, 1, 1) + vae.scale[0].float().view(1, -1, 1, 1, 1)
+            x = m.conv2(zz.to(m.conv2.weight.dtype))
+            outs = []
+            for i in range(x.shape[2]):
+                m._conv_idx = [0]
+                xi = x[:, :, i:i + 1].contiguous(memory_format=torch.channels_last_3d)
+                outs.append(m.decoder(xi, feat_cache=m._feat_map, feat_idx=m._conv_idx))
+            m.clear_cache()
+            return torch.cat(outs, 2).float().clamp_(-1, 1).squeeze(0)
+
+    def _flashvaed_decode(self, z):
+        """z: [C,T,H,W] model-space latent -> [C,F,H,W] in [-1,1]. window<=0: one uninterrupted cache."""
+        fv, win, warm = self._flashvaed, self._flashvaed_window, self._flashvaed_warm
+        m = fv.model
+        with torch.amp.autocast("cuda", dtype=fv.dtype):
+            zz = z.unsqueeze(0) / fv.scale[1].view(1, -1, 1, 1, 1) + fv.scale[0].view(1, -1, 1, 1, 1)
+            x = m.conv2(zz)
+            T = x.shape[2]
+            win = win if win > 0 else T
+            frames = []
+            for s in range(0, T, win):
+                m.clear_cache()
+                lo = max(0, s - warm)
+                for i in range(lo, min(T, s + win)):
+                    m._conv_idx = [0]
+                    out = m.decoder(x[:, :, i:i + 1], feat_cache=m._feat_map, feat_idx=m._conv_idx)
+                    if i >= s:
+                        frames.append(out)
+            m.clear_cache()
+            return torch.cat(frames, dim=2).squeeze(0).float().clamp_(-1, 1)
 
     def generate(self,
                  input_prompt,
@@ -603,6 +877,9 @@ class WanI2VCausal:
             batch_size = len(input_prompt)
         else:
             batch_size = 1
+        # LINGBOT_BATCH=B: replicate the single stream B times along the batch
+        # dim (identical inputs) to measure batched-serving cost per chunk.
+        batch_size = int(os.environ.get("LINGBOT_BATCH", batch_size))
         
         assert action_path is not None, "action_path is required"
         c2ws = np.load(os.path.join(action_path, "poses.npy")) # opencv coordinate
@@ -659,24 +936,12 @@ class WanI2VCausal:
         # 2. Prepare timesteps
         self.scheduler.set_timesteps(self.num_train_timesteps, shift=shift)
         timesteps = self.scheduler.timesteps[timesteps_index]
+        syncfree = os.environ.get("LINGBOT_SYNCFREE") == "1"
+        if syncfree:
+            sched_dev = self._syncfree_schedule(timesteps, os.environ.get("LINGBOT_DIT_FUSION") == "1")
 
         # preprocess
-        # T5 cache: skip the encoder entirely if we've seen this exact prompt
-        # before in this pipe instance. Bit-identical: cached tensor is the
-        # same object returned by the prior call.
-        cache_key = hashlib.sha256(input_prompt.encode('utf-8')).hexdigest()
-        if cache_key in self._t5_cache:
-            context = self._t5_cache[cache_key]
-        else:
-            if not self.t5_cpu:
-                self.text_encoder.model.to(self.device)
-                context = self.text_encoder([input_prompt], self.device)
-                if offload_model:
-                    self.text_encoder.model.cpu()
-            else:
-                context = self.text_encoder([input_prompt], torch.device('cpu'))
-                context = [t.to(self.device) for t in context]
-            self._t5_cache[cache_key] = context
+        context = self._encode_prompts([input_prompt], offload_model)[0]
 
         Ks = torch.from_numpy(np.load(os.path.join(action_path, "intrinsics.npy"))).float()
 
@@ -763,12 +1028,23 @@ class WanI2VCausal:
                                                           shape=cross_kv_shape,
                                                           dtype=transformer_dtype,
                                                           device=self.device)
+        dit_fusion = os.environ.get("LINGBOT_DIT_FUSION") == "1"
         # evaluation mode
         with (
                 torch.amp.autocast('cuda', dtype=self.param_dtype),
                 torch.no_grad(),
                 no_sync_model(),
         ):
+            if dit_fusion:
+                # Fill the cross-attn K/V once here (same autocast as the
+                # loop) so no forward takes the first-call branch, and
+                # allocate the per-chunk camera-modulation cache.
+                self.model.init_crossattn_cache([context[0]] * batch_size, cross_kv_cache)
+                self._cross_attn_initialized = True
+                cam_cache = self._initialize_cam_cache(
+                    num_layers=model_args.num_layers,
+                    shape=[batch_size, max_seq_len, model_args.dim],
+                    dtype=transformer_dtype, device=self.device)
             # sample videos
             latent = noise
             latents_chunk = latent.split(chunk_size, dim=1) # [c, f, h, w]
@@ -776,7 +1052,36 @@ class WanI2VCausal:
             c2ws_plucker_emb_chunk = c2ws_plucker_emb.split(chunk_size, dim=2)
             num_inference_chunk = len(latents_chunk)
             pred_latent_chunks = []
+            # LINGBOT_VAE_STREAM=1: decode chunk N on a side stream while chunk N+1 denoises
+            # (fused driver's streaming decode_step); the final whole-clip decode is skipped.
+            vae_stream_on = os.environ.get("LINGBOT_VAE_STREAM") == "1" and self._vae_fused is not None
+            if vae_stream_on:
+                vae_stream, dec_state, dec_pending, dec_frames = torch.cuda.Stream(), None, None, []
+            if self.frame_sink is not None:
+                assert vae_stream_on, "frame_sink needs LINGBOT_VAE_STREAM=1 and LINGBOT_VAE_FUSED"
+                chunk_t0 = []
+            bench_timing = os.environ.get("LINGBOT_BENCH_TIMING") == "1"
+            if bench_timing:
+                torch.cuda.synchronize()
+                t_loop0 = t_prev = time.perf_counter()
+            # Optional torch.profiler window over steady-state chunks
+            # (LINGBOT_PROFILE=<out_dir>, LINGBOT_PROFILE_CHUNKS=8-10).
+            prof_dir = os.environ.get("LINGBOT_PROFILE")
+            prof, prof_lo, prof_hi = None, -1, -1
+            if prof_dir:
+                lo, hi = os.environ.get("LINGBOT_PROFILE_CHUNKS", "8-10").split("-")
+                prof_lo, prof_hi = int(lo) - 1, int(hi) - 1  # 1-based in env, 0-based here
             for chunk_id in tqdm(range(num_inference_chunk)):
+                if prof_dir and chunk_id == prof_lo:
+                    torch.cuda.synchronize()
+                    prof = torch.profiler.profile(
+                        activities=[torch.profiler.ProfilerActivity.CPU, torch.profiler.ProfilerActivity.CUDA],
+                        record_shapes=True, with_flops=True)
+                    prof.__enter__()
+                _rf_chunk = torch.profiler.record_function(f"chunk{chunk_id}"); _rf_chunk.__enter__()
+                if self.frame_sink is not None:
+                    chunk_t0.append(time.monotonic())
+                _rf = torch.profiler.record_function("prep"); _rf.__enter__()
                 current_latent = latents_chunk[chunk_id]
                 current_condition = condition_chunk[chunk_id]
                 current_c2ws_plucker_emb = c2ws_plucker_emb_chunk[chunk_id]
@@ -786,9 +1091,9 @@ class WanI2VCausal:
                 }
 
                 kwargs = {
-                    'context': [context[0]],
+                    'context': [context[0]] * batch_size,
                     'seq_len': max_seq_len,
-                    'y': [current_condition],
+                    'y': [current_condition] * batch_size,
                     'dit_cond_dict': dit_cond_dict,
                     'kv_cache': self_kv_cache,
                     'crossattn_cache': cross_kv_cache,
@@ -796,16 +1101,37 @@ class WanI2VCausal:
                     'max_attention_size': kv_size if max_attention_size is None else max_attention_size,
                     'frame_seqlen': frame_seqlen,
                 }
+                if dit_fusion:
+                    kwargs['cam_cache'] = cam_cache
 
                 if offload_model:
                     torch.cuda.empty_cache()
+                if os.environ.get("LINGBOT_KV_RING") == "1":
+                    kv_ring_plan(self_kv_cache, kwargs['current_start'],
+                                 chunk_size * frame_seqlen, self.sink_size * frame_seqlen)
 
+                _rf.__exit__(None, None, None)
+                if vae_stream_on and dec_pending is not None:
+                    with torch.profiler.record_function("vae_stream_launch"), torch.no_grad():
+                        vae_stream.wait_stream(torch.cuda.current_stream())
+                        with torch.cuda.stream(vae_stream):
+                            dec_pending.record_stream(vae_stream)
+                            fr, dec_state = self._vae_fused.decode_step(dec_pending, dec_state)
+                            if self.frame_sink is not None:
+                                self.frame_sink(chunk_id - 1, fr, vae_stream, chunk_t0[chunk_id - 1])
+                            else:
+                                dec_frames.append(fr)
+                    dec_pending = None
                 for timestep_idx in range(len(timesteps)):
-                    latent_model_input = [current_latent.to(self.device)]
+                    _rf = torch.profiler.record_function(f"denoise_step{timestep_idx}"); _rf.__enter__()
+                    latent_model_input = [current_latent.to(self.device)] * batch_size
                     current_timestep = [timesteps[timestep_idx]]
 
-                    timestep = torch.stack(current_timestep).to(self.device)
+                    timestep = sched_dev['t'][timestep_idx] if syncfree else torch.stack(current_timestep).to(self.device)
 
+                    if dit_fusion:
+                        # cam MLP computed on the chunk's first forward, reused after
+                        kwargs['cam_first_call'] = timestep_idx == 0
                     noise_pred = self.model(
                         x=latent_model_input, t=timestep,
                         cross_attn_first_call=not self._cross_attn_initialized,
@@ -815,37 +1141,145 @@ class WanI2VCausal:
                     if offload_model:
                         torch.cuda.empty_cache()
 
-                    x0 = self._convert_flow_pred_to_x0(
-                        flow_pred=noise_pred,
-                        xt=current_latent,
-                        timestep=current_timestep[0],
-                        scheduler=self.scheduler,
-                    )
+                    if syncfree:
+                        # same ops and dtypes as _convert_flow_pred_to_x0 / add_noise
+                        x0 = (current_latent.double() - sched_dev['sigma_x0'][timestep_idx] * noise_pred.double()).to(noise_pred.dtype)
+                    else:
+                        x0 = self._convert_flow_pred_to_x0(
+                            flow_pred=noise_pred,
+                            xt=current_latent,
+                            timestep=current_timestep[0],
+                            scheduler=self.scheduler,
+                        )
 
                     if timestep_idx < len(timesteps) - 1:
                         next_timestep = timesteps[timestep_idx + 1]
-                        current_latent = self.scheduler.add_noise(x0, torch.randn(x0.shape, generator=seed_g, device=x0.device, dtype=x0.dtype), next_timestep)
+                        next_noise = torch.randn(x0.shape, generator=seed_g, device=x0.device, dtype=x0.dtype)
+                        if syncfree:
+                            assert x0.dtype == sched_dev['sigma_noise'].dtype
+                            sigma_t = sched_dev['sigma_noise'][timestep_idx]
+                            current_latent = (1 - sigma_t) * x0 + sigma_t * next_noise
+                        else:
+                            current_latent = self.scheduler.add_noise(x0, next_noise, next_timestep)
+                        _rf.__exit__(None, None, None)
                     else:
                         # note return x0
+                        _rf.__exit__(None, None, None)
                         break
 
                 pred_latent_chunks.append(x0)
+                if vae_stream_on:
+                    dec_pending = x0
+                _rf = torch.profiler.record_function("cache_write"); _rf.__enter__()
 
                 # Update kv cache
-                context_timestep = [timesteps[-1] * 0.0]
-                timestep = torch.stack(context_timestep).to(self.device)
-                self.model(x=[x0], t=timestep,
+                if dit_fusion:
+                    # int64 like the denoising steps: a float t here would be
+                    # a second dtype variant of the compiled graph. The
+                    # embedding casts t to float64 either way (same value).
+                    context_timestep = [timesteps[-1] * 0]
+                    kwargs['cam_first_call'] = False
+                else:
+                    context_timestep = [timesteps[-1] * 0.0]
+                timestep = sched_dev['t_zero'] if syncfree else torch.stack(context_timestep).to(self.device)
+                self.model(x=[x0] * batch_size, t=timestep,
                            cross_attn_first_call=False,
                            **kwargs)
+                _rf.__exit__(None, None, None)
+                if bench_timing:
+                    with torch.profiler.record_function("bench_sync"):
+                        torch.cuda.synchronize()
+                    now = time.perf_counter()
+                    logging.info(f"BENCH chunk={chunk_id} chunk_s={now - t_prev:.3f} loop_s={now - t_loop0:.3f}")
+                    self.bench_chunk_s = getattr(self, "bench_chunk_s", []) + [now - t_prev]
+                    t_prev = now
+                _rf_chunk.__exit__(None, None, None)
+                if prof is not None and chunk_id == prof_hi:
+                    torch.cuda.synchronize()
+                    prof.__exit__(None, None, None)
+                    os.makedirs(prof_dir, exist_ok=True)
+                    prof.export_chrome_trace(os.path.join(prof_dir, "trace.json.gz"))
+                    ka = prof.key_averages()
+                    with open(os.path.join(prof_dir, "kernels_top.txt"), "w") as f:
+                        f.write(ka.table(sort_by="self_device_time_total", row_limit=80))
+                    rows = [{"name": e.key, "self_cuda_us": e.self_device_time_total, "cuda_us": e.device_time_total,
+                             "cpu_us": e.self_cpu_time_total, "count": e.count, "flops": getattr(e, "flops", 0) or 0,
+                             "shapes": str(getattr(e, "input_shapes", ""))[:200]} for e in ka]
+                    with open(os.path.join(prof_dir, "kernels.json"), "w") as f:
+                        json.dump({"chunks": [prof_lo + 1, prof_hi + 1], "events": rows}, f)
+                    logging.info(f"BENCH profile written to {prof_dir} (chunks {prof_lo + 1}-{prof_hi + 1})")
+                    prof = None
 
             pred_latent_chunks = torch.cat(pred_latent_chunks, dim=1)
+            if dit_fusion:
+                kwargs['cam_cache'] = cam_cache = None  # ~1.1 GB; free before the decode
+            if _SAGE_KVQ:
+                sage_kvq.release(self_kv_cache)  # ~2.5 GB; same reason
 
             if offload_model:
                 self.model.cpu()
                 torch.cuda.empty_cache()
 
             if self.rank == 0:
-                videos = self.vae.decode([pred_latent_chunks])
+                if os.environ.get("LINGBOT_VAE_WARM") == "1" and (self._vae_cl or self._vae_half or self._vae_fused):
+                    # one-time compile/autotune of the decoder happens here, not in the timed decode
+                    with torch.no_grad():
+                        if self._vae_fused is not None:
+                            self._vae_fused.decode(pred_latent_chunks[:, :5])
+                        else:
+                            self._wanvae_decode(pred_latent_chunks[:, :5])
+                dump = os.environ.get("LINGBOT_DUMP_LATENTS")
+                if dump:
+                    torch.save(pred_latent_chunks.detach().cpu(), dump)  # outside the timed decode
+                if bench_timing:
+                    torch.cuda.synchronize()
+                    t_dec0 = time.perf_counter()
+                vprof = None
+                if os.environ.get("LINGBOT_PROFILE") and os.environ.get("LINGBOT_PROFILE_VAE") == "1":
+                    vprof = torch.profiler.profile(
+                        activities=[torch.profiler.ProfilerActivity.CPU, torch.profiler.ProfilerActivity.CUDA])
+                    vprof.__enter__()
+                if vae_stream_on:
+                    with torch.no_grad():
+                        vae_stream.wait_stream(torch.cuda.current_stream())
+                        with torch.cuda.stream(vae_stream):
+                            fr, dec_state = self._vae_fused.decode_step(dec_pending, dec_state)
+                            if self.frame_sink is not None:
+                                self.frame_sink(num_inference_chunk - 1, fr, vae_stream, chunk_t0[-1])
+                            else:
+                                dec_frames.append(fr)
+                        torch.cuda.current_stream().wait_stream(vae_stream)
+                        videos = [torch.cat(dec_frames, 1)] if dec_frames else [None]
+                elif self._flashvaed is not None:
+                    with torch.no_grad():
+                        videos = [self._flashvaed_decode(pred_latent_chunks)]
+                elif self._taehv is not None:
+                    with torch.no_grad():
+                        z = pred_latent_chunks
+                        if os.environ.get("LINGBOT_TAEHV_SCALE") == "vae":
+                            # decoders trained on the Wan VAE's own latent space (LightTAE)
+                            # take x0 * std + mean, i.e. the canonical decoder's input.
+                            mean, inv_std = self.vae.scale
+                            z = z / inv_std.view(-1, 1, 1, 1).to(z) + mean.view(-1, 1, 1, 1).to(z)
+                        z = z.permute(1, 0, 2, 3)[None].to(torch.float16)  # [C,T,H,W] -> [1,T,C,H,W]
+                        rgb = self._taehv.decode_video(z, parallel=False, show_progress_bar=False)  # [1,T,3,H,W] in [0,1]; sequential = low memory
+                    videos = [rgb[0].permute(1, 0, 2, 3).float().mul_(2).sub_(1).clamp_(-1, 1)]  # [3,T,H,W] in [-1,1]
+                elif self._vae_fused is not None:
+                    videos = [self._vae_fused.decode(pred_latent_chunks)]
+                elif self._vae_cl or self._vae_half:
+                    with torch.no_grad():
+                        videos = [self._wanvae_decode(pred_latent_chunks)]
+                else:
+                    videos = self.vae.decode([pred_latent_chunks])
+                if vprof is not None:
+                    torch.cuda.synchronize()
+                    vprof.__exit__(None, None, None)
+                    os.makedirs(os.environ["LINGBOT_PROFILE"], exist_ok=True)
+                    vprof.export_chrome_trace(os.path.join(os.environ["LINGBOT_PROFILE"], "trace_vae.json.gz"))
+                if bench_timing:
+                    torch.cuda.synchronize()
+                    logging.info(f"BENCH vae_decode_s={time.perf_counter() - t_dec0:.3f}")
+                    self.bench_vae_decode_s = time.perf_counter() - t_dec0
 
         # del noise, latent, x0
         # del sample_scheduler
@@ -929,17 +1363,7 @@ class WanI2VCausal:
         sample_scheduler = FlowUniPCMultistepScheduler(num_train_timesteps=self.num_train_timesteps, shift=1, use_dynamic_shifting=False)
 
         # preprocess text: cond + uncond
-        if not self.t5_cpu:
-            self.text_encoder.model.to(self.device)
-            context      = self.text_encoder([input_prompt], self.device)
-            context_null = self.text_encoder([n_prompt],     self.device)
-            if offload_model:
-                self.text_encoder.model.cpu()
-        else:
-            context      = self.text_encoder([input_prompt], torch.device('cpu'))
-            context_null = self.text_encoder([n_prompt],     torch.device('cpu'))
-            context      = [t.to(self.device) for t in context]
-            context_null = [t.to(self.device) for t in context_null]
+        context, context_null = self._encode_prompts([input_prompt, n_prompt], offload_model)
 
         # cam preparation (only if action_path is provided)
         c2ws_plucker_emb = None
@@ -1129,8 +1553,16 @@ class WanI2VCausal:
                 'k': torch.zeros(shape, dtype=dtype, device=device),
                 'v': torch.zeros(shape, dtype=dtype, device=device),
                 'global_end_index': torch.tensor([0], dtype=torch.long, device=device),
-                'local_end_index': torch.tensor([0], dtype=torch.long, device=device)
+                'local_end_index': torch.tensor([0], dtype=torch.long, device=device),
+                # Python-int mirrors of the two indices above. The attention
+                # layers advance these host-side so the eviction schedule
+                # needs no .item() GPU syncs; the tensors are kept in sync
+                # for external readers.
+                'global_end_int': 0,
+                'local_end_int': 0,
             })
+            if _SAGE_KVQ:
+                self_kv_cache[-1].update(sage_kvq.alloc_cache(shape, dtype, device))
 
         return self_kv_cache
 
@@ -1148,6 +1580,16 @@ class WanI2VCausal:
             })
 
         return crossattn_cache
+
+    def _initialize_cam_cache(self, num_layers, shape, dtype, device):
+        """
+        Per-layer camera-modulation cache (LINGBOT_DIT_FUSION): the cam MLP
+        output is fixed for a chunk, so it is computed once per chunk.
+        """
+        return [{
+            'scale': torch.zeros(shape, dtype=dtype, device=device),
+            'shift': torch.zeros(shape, dtype=dtype, device=device),
+        } for _ in range(num_layers)]
 
     def _initialize_crossattn_cache_pretrain(self, num_layers, shape, dtype, device):
         """

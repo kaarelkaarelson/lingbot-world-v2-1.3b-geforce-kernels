@@ -3,9 +3,9 @@ requires = ["setuptools>=61.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "lingbot-world-v2"
-version = "1.0.0"
-description = "lingbot-world-v2: Infinite Worlds with Versatile Interactions"
+name = "lingbot-world-1.3b-geforce-kernels"
+version = "0.1.0"
+description = "LingBot-World 2.0 1.3B at 16.2 FPS on one RTX 5090: upstream + inference kernels"
 authors = [
     { name = "Robbyant Team" }
 ]
