@@ -294,6 +294,7 @@ def _print_bench_summary(args, cfg):
         print(f"BENCH vae_decode_s_per_chunk={dec_per_chunk:.3f} "
               f"-> as-played FPS {frames_per_chunk / (steady_med + dec_per_chunk):.1f} "
               f"(real time = {cfg.sample_fps})")
+    print("BENCH chunk_s=" + " ".join(f"{s:.3f}" for s in chunk_s))
 
 
 def generate(args):
