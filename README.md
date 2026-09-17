@@ -19,13 +19,33 @@ Linux x86_64, an NVIDIA driver with CUDA 12.8 (driver ≥ 570), one RTX 5090 —
 ```bash
 git clone https://github.com/kaarelkaarelson/lingbot-world-v2-1.3b-geforce-kernels
 cd lingbot-world-v2-1.3b-geforce-kernels
-HF_TOKEN=hf_... ./setup.sh        # venv, pinned torch 2.8 + cu128, prebuilt sm_120 kernels, ~15 GB of weights, warm-up
-./run.sh --frame_num 361 --bench  # 22 s clip from examples/03 -> outputs/, prints s/chunk and FPS
+HF_TOKEN=hf_... ./setup.sh   # venv, pinned torch 2.8 + cu128, prebuilt sm_120 kernels, ~15 GB of weights, warm-up
+. .venv/bin/activate
+lingbot play                 # a window on the world model; drive it with the keyboard
 ```
+
+`lingbot play` opens an 832×464 window and starts the world from `examples/03/image.jpg`. The first rollout's first 6 chunks warm up the compiled graphs (~10 s with the `setup.sh` cache, minutes on a cold one; the window title shows the progress); after that the model responds to the keys at 16 FPS. Nothing leaves the machine: no browser, no network, no codec. The frames go from the GPU to a pinned host buffer to the window.
+
+| Key | Action |
+|---|---|
+| `W` `A` `S` `D` | move forward / left / back / right (walk; hold `Shift` to run) |
+| `Q` `E` | down / up |
+| `←` `→` `↑` `↓` | look left / right / up / down (45°/s); dragging the mouse also looks |
+| `R` | reset: restart the world from the image |
+| `Esc` | quit |
+
+The window title and the terminal print a HUD once a second: the FPS shown, the seconds per chunk (one chunk = 16 frames = 1 s of video), and key→pixel, the time from a keydown to the first frame shown of the latent it landed in, measured on every tap. Flags: `--image me.jpg` for your own first frame, `--input-mode hold` for zero-order-hold input (held keys act from the next chunk's first frame, releases overshoot up to one chunk; the default `history` replays each key edge into the latent it was made in), `--frame_num` for the rollout length (default 361 frames; the world restarts from the image after that), `lingbot play --help` for the rest.
+
+```bash
+lingbot bench   # 22 s clip from examples/03 -> outputs/, prints s/chunk and the FPS as played
+lingbot clip --image me.jpg --action_path my_poses/ --prompt "…"   # offline generation, any generate.py flag
+```
+
+`lingbot bench` and `lingbot clip` are `generate.py` with `run.sh`'s defaults (`./run.sh` still works and calls `lingbot clip`). `my_poses/` holds `poses.npy` (one OpenCV camera-to-world 4×4 per output frame) and `intrinsics.npy`, in the format of `examples/*/`.
 
 `setup.sh` needs your own Hugging Face token: the weights (`robbyant/lingbot-world-v2-1.3b-causal-fast`, plus the Wan VAE and T5 from the 14B release) are downloaded from Hugging Face and are not redistributed here. The first run compiles the DiT and the decoder (~2 min, cached in `.inductor_cache/`); `setup.sh` does that warm-up for you. The first run of each new prompt encodes it with T5-XXL once (~30 s) and caches the embedding under `weights/…/t5_cache/`.
 
-Your own image and camera path: `./run.sh --image me.jpg --action_path my_poses/ --prompt "…"`, where `my_poses/` holds `poses.npy` (one OpenCV camera-to-world 4×4 per output frame) and `intrinsics.npy`, in the format of `examples/*/`.
+No display (a cloud pod): `SDL_VIDEODRIVER=dummy lingbot play --headless-seconds 60` runs the real model without a window, taps `W` every 2.5 s and prints the same HUD and a summary (s/chunk, FPS as played, key→pixel).
 
 ## Presets
 
@@ -60,12 +80,14 @@ buffer, KV quantisation, batching), so the design space does not have to be re-e
 ## Scope
 
 - One RTX 5090 (sm_120). The prebuilt `sageattention` and `flash_attn` wheels are for sm_120, CPython 3.12, torch 2.8. Other GPUs need those built from source; an RTX 4090 should run every patch (FP8 rowwise and SageAttention both support sm_89) at roughly 12 FPS and needs T5 on the CPU to fit 24 GB — untested.
-- Clip generation from an image and a camera path. Browser streaming and keyboard/mouse control are being built in lingbot-world-bench and are not in this repo yet.
+- Clip generation from an image and a camera path, and a local window driven by the keyboard (`lingbot play`). Browser streaming (WebSocket / WebRTC transports, the pacer and codec measurements) lives in lingbot-world-v2-stream; `lingbot/play/` is its model-side half (`control.py`, `live.py`, the pacer) moved here.
 - Multi-GPU (`--ulysses_size`, FSDP) is upstream's code and is untouched but unmeasured here.
 
 ## CPU checks
 
 `tests/` holds fp32 CPU equivalence checks of the fused decoder and the fused DiT against the stock modules (no GPU): `python tests/test_vae_fused_cpu.py`, `python tests/test_vae_subpixel_cpu.py`, `python tests/test_dit_fusion_cpu.py`.
+
+`pytest tests/test_play_*.py` runs the `lingbot play` checks without a GPU: the input integrator and camera planner, the frame plumbing on a CPU stand-in for the model (`DryPipe`), the pacer, and `lingbot play --dry`, which runs the window loop headless for 3 chunks and checks that frames were shown and a key tap reached the model.
 
 ## License and credit
 
