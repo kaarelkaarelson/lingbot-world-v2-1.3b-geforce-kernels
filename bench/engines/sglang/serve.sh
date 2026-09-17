@@ -46,6 +46,15 @@ fi
 # Preflight (CPU only, same resolution code the server runs): --model-id must select LingBotWorldV2CausalDMDConfig
 # (shift 5, [1000,750,500,250]); the 1.x config would be shift 10 / [1000,821,642,321]. The server only logs this at
 # DEBUG, so check it here instead of grepping the log.
+# FlashInfer probes the GPU at import time in the entrypoint process, before CUDA is initialised there, so its
+# TARGET_CUDA_ARCHS is empty and every JIT call fails with "FlashInfer requires GPUs with sm75 or higher"; the
+# documented override fixes it (12.0a = RTX 5090).
+export FLASHINFER_CUDA_ARCH_LIST=${FLASHINFER_CUDA_ARCH_LIST:-12.0a}
+# The realtime entrypoint process never loads transformer/config.json (only the GPU worker does), so the chunk size it
+# requests is the dataclass default num_frames_per_block=3 regardless of the config. For the chunk-4 measurement the
+# default in the installed package is set to 4 (sglang v0.5.17 bug; the block-3 run was recorded too).
+sed -i 's/num_frames_per_block: int = 3/num_frames_per_block: int = 4/' \
+    "$(python -c 'import sglang.multimodal_gen.configs.models.dits.lingbot_world as m; print(m.__file__)')"
 echo "== preflight: config resolution"
 MODEL="$MODEL" python - <<'PY'
 import json, os

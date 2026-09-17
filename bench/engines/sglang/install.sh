@@ -60,6 +60,9 @@ echo "== 5/6 flashinfer-jit-cache cu128 (prebuilt kernels incl. sm_120; 1.3 GB; 
     --index-url https://flashinfer.ai/whl/cu128/
 
 echo "== 6/6 drop the orphaned CUDA-13 runtime libs that the PyPI torch pulled in (~3.5 GB)"
+# The cu13 and cu12 nvidia-* packages share the nvidia/ namespace directory: uninstalling the cu13 ones also
+# deletes files the cu12 ones own (metadata says installed, libcusparseLt.so.0 / libnvshmem_host.so.3 are gone).
+# So the torch cu128 stack is reinstalled after the removal (measured on pod 11: this is what made the import pass).
 ORPHANS=$("$UV" pip list --format=freeze \
     | grep -E '^nvidia-(cuda-nvrtc|cuda-runtime|cuda-cupti|cublas|cudnn|cufft|curand|cusolver|cusparse|cusparselt|nccl|nvtx|nvjitlink|cufile|nvshmem)-cu13==' \
     | cut -d= -f1 || true)
@@ -68,6 +71,8 @@ if [[ -n "$ORPHANS" ]]; then
     # shellcheck disable=SC2086
     "$UV" pip uninstall $ORPHANS
 fi
+"$UV" pip install --reinstall torch==2.11.0+cu128 torchvision==0.26.0+cu128 torchaudio==2.11.0+cu128 torchcodec==0.11.1+cu128 \
+    --index-url https://download.pytorch.org/whl/cu128
 "$UV" cache clean
 
 echo "== pins actually installed"
