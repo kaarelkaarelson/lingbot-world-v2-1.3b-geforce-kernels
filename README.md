@@ -14,7 +14,7 @@ This is the upstream repository at commit `1895d30` plus a set of inference patc
 
 ## Quick start
 
-Linux x86_64, an NVIDIA driver with CUDA 12.8 (driver ≥ 570), one RTX 5090. WSL2 works. Python 3.12 is installed by `setup.sh` if missing (deadsnakes on Ubuntu); the torch wheels bring their own CUDA runtime, so the host only needs the driver.
+Linux x86_64, an NVIDIA driver with CUDA 12.8 (driver ≥ 570), one RTX 5090. WSL2 works. Python 3.12 is fetched by `setup.sh` through `uv` if the system lacks it; the torch wheels bring their own CUDA runtime, so the host only needs the driver.
 
 ```bash
 git clone https://github.com/kaarelkaarelson/lingbot-world-v2-1.3b-geforce-kernels

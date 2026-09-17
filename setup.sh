@@ -10,32 +10,32 @@ REL=${REL:-https://github.com/kaarelkaarelson/lingbot-world-v2-1.3b-geforce-kern
 PY=${PY:-python3.12}
 
 [ -n "${HF_TOKEN:-}" ] || { echo "HF_TOKEN is not set (https://huggingface.co/settings/tokens)"; exit 1; }
-if ! command -v "$PY" >/dev/null; then
-  # stock Ubuntu / RunPod images ship 3.10 or 3.11; the prebuilt kernels are cp312
-  if command -v apt-get >/dev/null; then
-    echo "== installing Python 3.12 (deadsnakes) =="
-    apt-get update -q >/dev/null && apt-get install -y -q software-properties-common >/dev/null \
-      && add-apt-repository -y ppa:deadsnakes/ppa >/dev/null && apt-get update -q >/dev/null \
-      && apt-get install -y -q python3.12 python3.12-venv python3.12-dev >/dev/null
-  fi
-  command -v "$PY" >/dev/null || { echo "$PY not found and could not be installed; install Python 3.12 and re-run"; exit 1; }
+if command -v "$PY" >/dev/null; then
+  echo "== venv ($PY) =="
+  [ -d .venv ] || "$PY" -m venv .venv
+  . .venv/bin/activate
+  pip install -q --upgrade pip
+  PIP="pip"
+else
+  # stock Ubuntu / RunPod images ship Python 3.10 or 3.11 and the prebuilt kernels are cp312:
+  # uv fetches a standalone 3.12 without touching apt (add-apt-repository is broken on many images)
+  echo "== Python 3.12 via uv (no system python3.12) =="
+  command -v uv >/dev/null || curl -LsSf https://astral.sh/uv/install.sh | sh >/dev/null
+  export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$PATH"
+  [ -d .venv ] || uv venv -q --python 3.12 .venv
+  . .venv/bin/activate
+  PIP="uv pip"
 fi
-nvidia-smi --query-gpu=name,driver_version --format=csv,noheader || { echo "no NVIDIA driver"; exit 1; }
-
-echo "== venv =="
-[ -d .venv ] || "$PY" -m venv .venv
-. .venv/bin/activate
-pip install -q --upgrade pip
-pip install -q torch==2.8.0 torchvision==0.23.0 --index-url https://download.pytorch.org/whl/cu128
-pip install -q -r requirements.txt
+$PIP install -q torch==2.8.0 torchvision==0.23.0 --index-url https://download.pytorch.org/whl/cu128
+$PIP install -q -r requirements.txt
 
 echo "== prebuilt kernels (sm_120, cp312, torch 2.8) =="
 mkdir -p wheels
 for w in sageattention-2.2.0-cp312-cp312-linux_x86_64.whl flash_attn-2.8.3.post1-cp312-cp312-linux_x86_64.whl; do
   [ -f "wheels/$w" ] || curl -sSfL -o "wheels/$w" "$REL/$w"
 done
-pip install -q wheels/sageattention-2.2.0-cp312-cp312-linux_x86_64.whl
-pip install -q wheels/flash_attn-2.8.3.post1-cp312-cp312-linux_x86_64.whl || echo "flash_attn wheel did not install; cross-attention will use SDPA (a ~2 % slower step)"
+$PIP install -q wheels/sageattention-2.2.0-cp312-cp312-linux_x86_64.whl
+$PIP install -q wheels/flash_attn-2.8.3.post1-cp312-cp312-linux_x86_64.whl || echo "flash_attn wheel did not install; cross-attention will use SDPA (a ~2 % slower step)"
 
 echo "== weights (Hugging Face, your token) =="
 mkdir -p weights
