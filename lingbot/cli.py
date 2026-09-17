@@ -12,13 +12,14 @@ import subprocess
 import sys
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-EXAMPLE = "examples/03"
+EXAMPLE = "examples/03"   # relative to REPO (bench/clip run there; play resolves the defaults below)
 PROMPT = ("A serene lakeside scene with a lone tree standing in calm water, surrounded by distant snow-capped "
           "mountains under a bright blue sky with drifting white clouds — gentle ripples reflect the tree and sky, "
           "creating a tranquil, meditative atmosphere.")
 CLIP_DEFAULTS = ["--image", f"{EXAMPLE}/image.jpg", "--action_path", EXAMPLE, "--prompt", PROMPT, "--save_dir", "outputs"]
 CKPT_DIR = "weights/lingbot-world-v2-1.3b-causal-fast"
 ASSETS_DIR = "weights/lingbot-world-v2-14b-causal-fast"
+_R = lambda p: os.path.join(REPO, p)
 
 
 def _env():
@@ -45,15 +46,15 @@ def cmd_bench(argv: list[str]) -> int:
 def _play_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="lingbot play", description="Open a window on the world model and drive it with the keyboard.",
                                 formatter_class=argparse.ArgumentDefaultsHelpFormatter)
-    p.add_argument("--image", default=f"{EXAMPLE}/image.jpg", help="first frame")
-    p.add_argument("--action_path", default=EXAMPLE, help="directory with intrinsics.npy (poses.npy is replaced by the keys)")
+    p.add_argument("--image", default=_R(f"{EXAMPLE}/image.jpg"), help="first frame")
+    p.add_argument("--action_path", default=_R(EXAMPLE), help="directory with intrinsics.npy (poses.npy is replaced by the keys)")
     p.add_argument("--prompt", default=PROMPT)
     p.add_argument("--preset", default="fast", choices=["fast", "exact", "stock"], help="generate.py preset (env defaults)")
     p.add_argument("--frame_num", type=int, default=361, help="frames per rollout; the world restarts from the image after that (or on R)")
     p.add_argument("--chunk_size", type=int, default=4, help="latents per chunk (4 = 16 frames = 1 s of input per chunk)")
     p.add_argument("--seed", type=int, default=42)
-    p.add_argument("--ckpt_dir", default=CKPT_DIR)
-    p.add_argument("--assets_dir", default=ASSETS_DIR)
+    p.add_argument("--ckpt_dir", default=_R(CKPT_DIR))
+    p.add_argument("--assets_dir", default=_R(ASSETS_DIR))
     p.add_argument("--input-mode", choices=["history", "hold"], default="history",
                    help="history: the previous chunk period's key edges replay into the 4 slots (taps land in the latent they were "
                         "made in, one period of lag); hold: every slot gets the keys held at the sample (held keys respond from "
@@ -77,7 +78,6 @@ def cmd_play(argv: list[str]) -> int:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s", datefmt="%H:%M:%S")
     headless = args.dry or args.headless_seconds is not None
     control = InputState(mode=args.input_mode)
-    os.chdir(REPO)
     if args.dry:
         from .play.live import DryPipe, LiveSource
         for k, v in {"LINGBOT_VAE_FUSED": "1", "LINGBOT_VAE_STREAM": "1", "LINGBOT_DECODE_FIRST": "1", "LINGBOT_WARM_CHUNKS": "0"}.items():
@@ -89,7 +89,7 @@ def cmd_play(argv: list[str]) -> int:
     else:
         from PIL import Image
         from .play.live import LiveSource, build_pipe, output_size
-        os.environ.setdefault("TORCHINDUCTOR_CACHE_DIR", os.path.join(REPO, ".inductor_cache"))
+        os.environ.update(_env())   # run.sh's TORCHINDUCTOR_CACHE_DIR and cuda PATH
         img = Image.open(args.image).convert("RGB")
         width, height = output_size(*img.size)
         pipe = build_pipe(args.ckpt_dir, args.assets_dir, preset=args.preset)

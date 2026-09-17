@@ -143,7 +143,7 @@ class Cv2Display:
                 reset = True
             elif k in self.KEYS:
                 self.last_seen[self.KEYS[k]] = now
-            elif k & 0xFF in self.KEYS:
+            elif (k & 0xFF) in self.KEYS:
                 self.last_seen[self.KEYS[k & 0xFF]] = now
         held = {code for code, t in self.last_seen.items() if now - t < self.HOLD_S}
         return held, reset, quit_, 0.0, 0.0
