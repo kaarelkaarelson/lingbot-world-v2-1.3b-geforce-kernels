@@ -99,3 +99,30 @@ def test_rollout_boundary_does_not_stall_the_presenter(monkeypatch):
     # hard underruns are counted per missed frame period (~20 per boundary at 40 fps), not per loop pass
     assert stats["underruns"] < 80, stats["underruns"]
 
+
+def test_esc_stops_generation_and_joins_the_threads(monkeypatch, tmp_path):
+    _env(monkeypatch)
+    st = InputState()
+    pipe = DryPipe(n_chunks=4, chunk_seconds=0.1, h=8, w=8, decode_first=True)
+    tsv = tmp_path / "t.tsv"
+    src = LiveSource(pipe, None, "/dev/null", "p", width=8, height=8, control=st, loop=True, timing_tsv=str(tsv))
+    disp = window.open_display(8, 8, "t", headless=True)
+    presented = [0]
+    present = disp.present
+    disp.present = lambda rgb: (presented.__setitem__(0, presented[0] + 1), present(rgb))
+    poll = disp.poll
+
+    def poll_with_esc():  # Esc after 20 frames, mid-rollout (posted to pygame's event queue when it is the backend)
+        esc = presented[0] >= 20
+        if esc and hasattr(disp, "pg"):
+            disp.pg.event.post(disp.pg.event.Event(disp.pg.KEYDOWN, key=disp.pg.K_ESCAPE))
+        held, reset, quit_, dx, dy = poll()
+        return held, reset, quit_ or (esc and not hasattr(disp, "pg")), dx, dy
+    disp.poll = poll_with_esc
+    t0 = time.monotonic()
+    stats = window.play_loop(src, st, disp, hud=lambda *a: None)
+    assert time.monotonic() - t0 < 5.0 and 20 <= stats["presented"] < 40
+    # close() unwound generate() at the chunk gate and joined both threads; the timing file closed after the host
+    assert not src._gen.is_alive() and not src._host.is_alive() and src.error is None
+    assert src._timing_f.closed and len(tsv.read_text().splitlines()) == len(src.timing_rows) + 1
+

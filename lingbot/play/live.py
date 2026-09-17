@@ -142,6 +142,8 @@ class LiveSource:
                 try:
                     self.pipe.generate(self.prompt, self.img, action_path=self.action_path, **kw)
                 except RolloutReset:
+                    if self._closed.is_set():  # close(): unwound at the chunk gate
+                        break
                     log.info("rollout %d reset by the player", self.rollouts)
                 self.rollouts += 1
                 self._chunk_base += self._rollout_chunks
@@ -165,6 +167,11 @@ class LiveSource:
     def _chunk_gate(self, chunk_id):
         if self.throttle is not None and self.ready.is_set() and not self._closed.is_set():
             self.throttle()
+        if self._closed.is_set():
+            # close() is waiting to join this thread: leave generate() before the next chunk starts, so the
+            # thread ends while the interpreter is still whole (a generation thread alive at exit dies inside
+            # torch's static teardown: "terminate called without an active exception")
+            raise RolloutReset()
 
     def _sink(self, chunk_id, fr, stream, chunk_gen_start, frame_offset=0):
         """Called on the generation thread with `fr` [C,F,H,W] queued on `stream`. Must not block.
@@ -235,10 +242,17 @@ class LiveSource:
     def dropped_chunks(self) -> int:
         return self.queue.dropped_chunks + self.dropped_at_sink
 
-    def close(self) -> None:
+    def close(self, timeout: float = 10.0) -> None:
+        """Stop generation at the next chunk gate and join the threads (at most `timeout` s each; a compile
+        in flight can hold the generation thread longer, in which case it is left running and reported)."""
         self._closed.set()
+        self._gen.join(timeout)
+        if self._gen.is_alive():
+            log.warning("generation thread still busy %.0f s after close (compile in flight?); not joined", timeout)
+        self._host.join(timeout)
         self.queue.close()
-        if self._timing_f:
+        # the host thread writes timing rows until it has drained the sink; the file is closed only once it is done
+        if self._timing_f and not self._host.is_alive():
             self._timing_f.close()
 
 
