@@ -65,25 +65,23 @@ lingbot play stonehenge --input-mode hold                           # a scene by
 
 Every `fast` component is an inference-side change; the checkpoint, the sampler (4 steps, 4-latent chunks, 18-frame KV window with 6 sink frames) and the decoder architecture are upstream's. The two decoders the field uses to go faster than this (TAEHV, Flash-VAED) were tried and rejected for sharpness (−33 % Laplacian energy); the fused decoder here is the original Wan 2.1 decoder at fp16.
 
-## What the patches do
+## Optimizations, layer by layer
 
-| Patch | Gain, s per chunk | Where |
-|---|---|---|
-| KV-cache sync fix (upstream PR #3, bit-exact) and safetensors fast load | −0.10; cold start 357 s → ~50 s | `wan/image2video.py`, `wan/modules/t5.py` |
-| torch.compile of the DiT, Inductor coordinate-descent tuning | −0.09 | `wan/image2video.py` |
-| FP8 rowwise linears (torchao) on all 420 DiT `Linear`s | −0.21 | `wan/image2video.py` |
-| SageAttention 2.2 for self-attention (2.54× FlashAttention-2 at these shapes) | −0.43 | `wan/modules/attention.py` |
-| Fused DiT: one-row time MLP, fp32 residual path fused, cam-modulation cache, RoPE tables per chunk | −0.20 | `wan/modules/model_fast_fusion.py` |
-| Sync-free denoising loop, compensated-fp32 RoPE, Inductor tuning (bit-identical) | −0.02 | `wan/image2video.py` |
-| Fused fp16 channels-last Wan VAE decoder, compiled, sub-pixel upsample convs | 1.05 → 0.34 | `wan/modules/vae2_1_fused.py` |
+Every change is inference-side: the checkpoint, the sampler (4 steps, 4-latent chunks, 18-frame KV window) and the decoder architecture are upstream's. The work went top-down through the standard layers, cheapest and most general first, and stopped at the kernel boundary. Gains are per 1 s chunk (16 frames) on one RTX 5090, measured after each step on the deterministic loop; "headroom" is what the profile of the shipped stack says is left in that layer (`OPTIMIZATIONS.md` §17).
 
-The DiT is compute-bound at batch 1 (SageAttention at its kernel ceiling, FP8 GEMMs at 89 % of the 5090's peak), so one card serves one real-time stream; batching two streams gives each 8.5 FPS. Details, profiles and dead ends: `OPTIMIZATIONS.md` in lingbot-world-bench.
+| # | Layer | What changed | Gain | Numerics vs stock | Headroom left |
+|---|---|---|---|---|---|
+| 1 | Host syncs | KV-cache bookkeeping without per-layer `.item()`; GPU-resident timesteps and sigmas (110 → 2 host syncs per 3 chunks) | DiT −0.11 s | bit-identical | GPU busy 98.0 %, idle 0.013 s/chunk |
+| 2 | Compiler | `torch.compile` of the DiT; 13 graphs / 12 breaks → 1 / 0; recompiles 11 → 0 (dtype and `None`-kwarg triggers fixed); Inductor coordinate-descent tuning and multi-kernel | DiT −0.29 s | bit-identical (`--preset exact`) | unfused elementwise 0.001 s/chunk |
+| 3 | Caching | Text K/V once per generation; RoPE cos/sin tables per chunk; camera-modulation MLP once per chunk; T5 embeddings cached on disk; safetensors fast load | inside #2; cold start 357 → 50 s | bit-identical | cross-attention 0.017 s/chunk |
+| 4 | Precision | Fused fp16 channels-last Wan VAE decoder, compiled, exact sub-pixel rewrite of the three upsample convs | VAE 1.05 → 0.34 s | 72.6 dB vs the fp32 decoder on identical latents | conv at 83 % of fp16 peak |
+| 5 | Quantization | FP8 rowwise W8A8 on all 420 DiT linears (`_scaled_mm`, amax fused into the GEMM epilogue) | DiT −0.21 s | same-latent 43.6 dB / SSIM 0.981; rollout not bit-comparable | GEMMs at ~90 % of FP8 peak |
+| 6 | Kernel swap | SageAttention 2.2 (INT8 QK / FP8 PV) built for sm_120 in place of FlashAttention-2 (2.5× at these shapes) | DiT −0.43 s | metric-lossless on the same latents (QUALITY.md) | attention at 65 % of INT8 peak — the one kernel with room |
+| | **Total** | | **3.9 → 0.98 s/chunk, 5.7 → 16–17 FPS as played** | | ~0.70 s at 100 % of every peak |
 
-## What was tried
+Where it stops: the shipped chunk is 0.64 s of DiT + 0.34 s of decoder, and 98 % of that wall time is inside four kernels written by others — attention 0.28 s, FP8 GEMMs 0.20 s, Inductor elementwise 0.09 s, cuDNN convolution 0.30 s — three of them at 83–90 % of the card's peak. The one custom kernel the roofline justifies is attention (65 % of peak; a 90 % sm_120 kernel would be +8 % on the chunk, about one FPS). Everything larger is on the model side: the fifth forward per chunk (0.12 s), the KV window the attention cost scales with, and the 4-step schedule. Batching does not change the picture: the DiT is compute-bound at batch 1, so batch 2 costs 1.93× per chunk and one card serves one real-time player.
 
-`OPTIMIZATIONS.md` is the full experiment log behind these numbers — every lever with its effect,
-whether it is lossless, and the dead ends with the reason (tiny decoders, CAS sharpening, KV ring
-buffer, KV quantisation, batching), so the design space does not have to be re-explored.
+`OPTIMIZATIONS.md` is the full log behind the table: every experiment with its measurement, the profiles and rooflines, and the levers that were measured and rejected.
 
 ## Scope
 
