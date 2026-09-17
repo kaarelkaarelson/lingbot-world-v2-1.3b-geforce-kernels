@@ -71,9 +71,19 @@ def test_cli_smoke_and_play_dry():
     for args in (["--help"], ["play", "--help"]):
         out = subprocess.run([sys.executable, "-m", "lingbot.cli", *args], cwd=ROOT, env=env, capture_output=True, text=True)
         assert out.returncode == 0 and "play" in out.stdout, out
-    out = subprocess.run([sys.executable, "-m", "lingbot.cli", "play", "--dry"], cwd=ROOT, env=env, capture_output=True, text=True, timeout=120)
+    out = subprocess.run([sys.executable, "-m", "lingbot.cli", "play", "wall", "--dry"], cwd=ROOT, env=env, capture_output=True, text=True, timeout=120)
     assert out.returncode == 0, out.stdout + out.stderr
     assert "PLAY chunks=3" in out.stdout and "key->pixel onset p50" in out.stdout, out.stdout
+    out = subprocess.run([sys.executable, "-m", "lingbot.cli", "play", "moon", "--dry"], cwd=ROOT, env=env, capture_output=True, text=True)
+    assert out.returncode == 2 and "invalid choice" in out.stderr
+
+
+def test_every_scene_is_complete():
+    from lingbot.cli import SCENES
+    for name, d in SCENES.items():
+        for f in ("image.jpg", "prompt.txt", "intrinsics.npy"):
+            assert os.path.exists(os.path.join(ROOT, d, f)), f"{name}: {d}/{f}"
+        assert len(open(os.path.join(ROOT, d, "prompt.txt")).read().strip()) > 40, name
 
 
 def test_rollout_boundary_does_not_stall_the_presenter(monkeypatch):

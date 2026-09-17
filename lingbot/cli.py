@@ -13,10 +13,11 @@ import sys
 import time
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-EXAMPLE = "examples/03"   # relative to REPO (bench/clip run there; play resolves the defaults below)
-PROMPT = ("A serene lakeside scene with a lone tree standing in calm water, surrounded by distant snow-capped "
-          "mountains under a bright blue sky with drifting white clouds — gentle ripples reflect the tree and sky, "
-          "creating a tranquil, meditative atmosphere.")
+# One word per upstream example scene (image.jpg + prompt.txt + intrinsics.npy in examples/NN).
+SCENES = {"lake": "examples/03", "wall": "examples/04", "stonehenge": "examples/01", "alley": "examples/02",
+          "castle": "examples/00", "dragon": "examples/05"}
+EXAMPLE = SCENES["lake"]   # relative to REPO (bench/clip run there; play resolves the defaults below)
+PROMPT = open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), EXAMPLE, "prompt.txt")).read().strip()
 CLIP_DEFAULTS = ["--image", f"{EXAMPLE}/image.jpg", "--action_path", EXAMPLE, "--prompt", PROMPT, "--save_dir", "outputs"]
 CKPT_DIR = "weights/lingbot-world-v2-1.3b-causal-fast"
 ASSETS_DIR = "weights/lingbot-world-v2-14b-causal-fast"
@@ -47,9 +48,10 @@ def cmd_bench(argv: list[str]) -> int:
 def _play_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="lingbot play", description="Open a window on the world model and drive it with the keyboard.",
                                 formatter_class=argparse.ArgumentDefaultsHelpFormatter)
-    p.add_argument("--image", default=_R(f"{EXAMPLE}/image.jpg"), help="first frame")
-    p.add_argument("--action_path", default=_R(EXAMPLE), help="directory with intrinsics.npy (poses.npy is replaced by the keys)")
-    p.add_argument("--prompt", default=PROMPT)
+    p.add_argument("scene", nargs="?", default="lake", choices=sorted(SCENES), help="example scene: its image, prompt and intrinsics")
+    p.add_argument("--image", default=None, help="first frame (default: the scene's image.jpg)")
+    p.add_argument("--action_path", default=None, help="directory with intrinsics.npy (default: the scene's; poses.npy is replaced by the keys)")
+    p.add_argument("--prompt", default=None, help="default: the scene's prompt.txt")
     p.add_argument("--preset", default="fast", choices=["fast", "exact", "stock"], help="generate.py preset (env defaults)")
     p.add_argument("--frame_num", type=int, default=361, help="frames per rollout; the world restarts from the image after that (or on R)")
     p.add_argument("--chunk_size", type=int, default=4, help="latents per chunk (4 = 16 frames = 1 s of input per chunk)")
@@ -77,6 +79,10 @@ def cmd_play(argv: list[str]) -> int:
     from .play import window
     from .play.control import InputState
     args = _play_parser().parse_args(argv)
+    scene = _R(SCENES[args.scene])
+    args.image = args.image or os.path.join(scene, "image.jpg")
+    args.action_path = args.action_path or scene
+    args.prompt = args.prompt or open(os.path.join(scene, "prompt.txt")).read().strip()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s", datefmt="%H:%M:%S")
     headless = args.dry or args.headless_seconds is not None
     control = InputState(mode=args.input_mode)
@@ -122,6 +128,7 @@ def main(argv: list[str] | None = None) -> int:
     if not argv or argv[0] in ("-h", "--help"):
         print("usage: lingbot <command> [flags]\n\n"
               "  play   open a window on the world model; WASD / arrows drive it (lingbot play --help)\n"
+              "         lingbot play [" + "|".join(sorted(SCENES)) + "]  (default lake)\n"
               "  bench  ./run.sh --frame_num 361 --bench: a 22 s clip from examples/03, s/chunk and FPS as played\n"
               "  clip   offline generation with run.sh's flags (lingbot clip --help)")
         return 0
