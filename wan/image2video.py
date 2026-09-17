@@ -1297,8 +1297,10 @@ class WanI2VCausal:
                 torch.cuda.empty_cache()
 
             if self.rank == 0:
+                # not under vae_stream_on: the whole-clip decode never runs there and decode_step is warm since
+                # chunk 0, so the block would only add ~0.4 s to the first rollout boundary of a live session
                 if os.environ.get("LINGBOT_VAE_WARM") == "1" and (self._vae_cl or self._vae_half or self._vae_fused) \
-                        and not getattr(self, "_vae_warmed", False):
+                        and not vae_stream_on and not getattr(self, "_vae_warmed", False):
                     self._vae_warmed = True
                     # one-time compile/autotune of the decoder happens here, not in the timed decode
                     with torch.no_grad():
