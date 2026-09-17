@@ -2,6 +2,10 @@
 
 Real-time [LingBot-World 2.0](https://github.com/Robbyant/lingbot-world-v2) (1.3B `causal_fast`) on one RTX 5090: **17 FPS as played** at 832×464 (16.9–17.0 measured on a stock pod), up from 5.5 FPS with the stock code, with the original Wan 2.1 decoder and no change to the model. Real time is 16 FPS.
 
+![lingbot play dragon at 16 fps](docs/dragon_16fps.gif)
+
+`lingbot play dragon`, 8 s of the 22 s clip; the counter is the real per-chunk rate (16 frames ÷ that chunk's DiT + VAE time). Full clip: [dragon_16fps.mp4](https://github.com/kaarelkaarelson/lingbot-world-v2-1.3b-geforce-kernels/releases/download/v0.2.0/dragon_16fps.mp4) (22 MB).
+
 This is the upstream repository at commit `1895d30` plus a set of inference patches, applied in-tree, with one command to run it. Everything here was measured on a RunPod RTX 5090 (32 GB); the measurements, the profiles and the quality checks live in [lingbot-world-v2-stream](https://github.com/kaarelkaarelson/lingbot-world-v2-stream).
 
 | Configuration | DiT + VAE, s per 1 s chunk | FPS as played |
