@@ -13,27 +13,7 @@ import torch
 import torch.distributed as dist
 from PIL import Image
 
-# Presets are applied as LINGBOT_* environment defaults before `wan` is imported,
-# because the fused DiT and the attention backend are chosen at import time.
-# Explicitly exported LINGBOT_* variables win over the preset.
-PRESETS = {
-    # 16.2 FPS on one RTX 5090 (OPTIMIZATIONS.md in lingbot-world-bench, exp. 15):
-    # torch.compile + coordinate-descent tuning, fused DiT, sync-free loop,
-    # compensated-fp32 RoPE, FP8 rowwise linears, SageAttention, fused fp16 VAE.
-    "fast": {
-        "LINGBOT_TORCH_COMPILE": "1", "LINGBOT_INDUCTOR_TUNE": "1",
-        "LINGBOT_DIT_FUSION": "1", "LINGBOT_SYNCFREE": "1",
-        "LINGBOT_DIT_FUSION_ROPE": "fp32c", "LINGBOT_FP8": "1",
-        "LINGBOT_ATTN": "sage", "LINGBOT_VAE_FUSED": "1",
-        "LINGBOT_VAE_SUBPIXEL": "1", "LINGBOT_VAE_WARM": "1",
-    },
-    # Same, with the DiT bit-identical to the stock bf16 model (14.8 FPS):
-    # the one-row time-embedding MLP is expanded back to L rows.
-    "exact": {"LINGBOT_DIT_FUSION_EXACT_T": "1"},
-    # Upstream code path, no optimisation (5.5 FPS): for A/B comparisons.
-    "stock": {},
-}
-PRESETS["exact"] = {**PRESETS["fast"], **PRESETS["exact"]}
+from lingbot.presets import PRESETS, apply_preset
 
 
 def _apply_preset(argv):
@@ -44,10 +24,7 @@ def _apply_preset(argv):
             preset = argv[i + 1]
         elif a.startswith("--preset="):
             preset = a.split("=", 1)[1]
-    if preset not in PRESETS:
-        sys.exit(f"--preset must be one of {sorted(PRESETS)}, got {preset!r}")
-    for k, v in PRESETS[preset].items():
-        os.environ.setdefault(k, v)
+    apply_preset(preset)
     if "--bench" in argv:
         os.environ.setdefault("LINGBOT_BENCH_TIMING", "1")
     return preset
