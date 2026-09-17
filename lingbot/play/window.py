@@ -288,6 +288,7 @@ def play_loop(src, control: InputState, display, *, fps: int = 16, prefill: int 
     seq, prev_held = 0, set()
     next_due = None
     t_hud = t_start
+    t_underrun = float("-inf")
     hud_presented = 0
     try:
         while True:
@@ -318,8 +319,10 @@ def play_loop(src, control: InputState, display, *, fps: int = 16, prefill: int 
                     k2p.presented(f.chunk, f.idx, time.monotonic())
                     next_due += interval * rc.period_scale(now, len(playout))
                 else:
-                    stats["underruns"] += 1
-                    next_due = now
+                    if now - t_underrun >= interval:  # one hard underrun per missed frame period, not per pass
+                        stats["underruns"] += 1
+                        t_underrun = now
+                    next_due = now  # the next frame is shown the moment it arrives
             if now - t_hud >= HUD_EVERY:
                 fps_now = (stats["presented"] - hud_presented) / (now - t_hud)
                 hud_presented, t_hud = stats["presented"], now
@@ -331,7 +334,10 @@ def play_loop(src, control: InputState, display, *, fps: int = 16, prefill: int 
                         f"underruns {stats['underruns']}{warm}")
                 hud("%s", line)
                 display.set_caption(f"lingbot play  {line}")
-            sleep_until = min(next_due, now + 1.0 / POLL_HZ) if started[0] else now + 1.0 / POLL_HZ
+            # an empty queue is waited out at the poll rate: a busy spin here starves the generation thread
+            # through the GIL (each kernel launch gives the GIL up and waits a switch interval, ~5 ms, to get
+            # it back: a chunk's launches then take seconds, and the queue stays empty -- the boundary stall)
+            sleep_until = min(next_due, now + 1.0 / POLL_HZ) if started[0] and playout else now + 1.0 / POLL_HZ
             dt = sleep_until - time.monotonic()
             if dt > 0:
                 time.sleep(dt)

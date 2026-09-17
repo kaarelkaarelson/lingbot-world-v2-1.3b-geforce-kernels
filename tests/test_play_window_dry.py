@@ -73,3 +73,29 @@ def test_cli_smoke_and_play_dry():
     out = subprocess.run([sys.executable, "-m", "lingbot.cli", "play", "--dry"], cwd=ROOT, env=env, capture_output=True, text=True, timeout=120)
     assert out.returncode == 0, out.stdout + out.stderr
     assert "PLAY chunks=3" in out.stdout and "key->pixel onset p50" in out.stdout, out.stdout
+
+
+def test_rollout_boundary_does_not_stall_the_presenter(monkeypatch):
+    """The pod stall: at a rollout boundary the playout queue empties (0.5-0.9 s of setup before chunk 0), and a
+    presenter that busy-spins on the empty queue starves the generation thread through the GIL (every kernel
+    launch gives the GIL up and waits ~5 ms to get it back), so the queue stays empty for tens of seconds."""
+    _env(monkeypatch)
+    st = InputState()
+    # 16 frames per 0.4 s = real time at 40 fps; a 0.5 s gap between rollouts (the pipeline's 0.5-0.9 s), longer
+    # than the buffered chunk, so the queue is empty while chunk 0's 300 GIL round trips run
+    period, gap = 0.4, 0.5
+    pipe = DryPipe(n_chunks=3, chunk_seconds=period, h=8, w=8, decode_first=True, boundary_seconds=gap, ops_per_chunk=300)
+    src = LiveSource(pipe, None, "/dev/null", "p", width=8, height=8, control=st, loop=True)
+    disp = window.open_display(8, 8, "t", headless=True)
+    shown = []
+    present = disp.present
+    disp.present = lambda rgb: (shown.append(time.monotonic()), present(rgb))
+    stats = window.play_loop(src, st, disp, fps=40, seconds=4.5, scripted=True, hud=lambda *a: None)
+    gaps = [b - a for a, b in zip(shown, shown[1:])]
+    # rollout 2's chunk 0 never arrived within the run under the spin (300 x ~5 ms per launch, then the same
+    # again for every chunk that starts on an empty queue); paced, a boundary costs the gap plus chunk 0
+    assert src.error is None and src.rollouts >= 2, (stats, max(gaps))
+    assert max(gaps) < gap + 1.5 * period, f"presentation stalled for {max(gaps):.2f} s"
+    # hard underruns are counted per missed frame period (~20 per boundary at 40 fps), not per loop pass
+    assert stats["underruns"] < 80, stats["underruns"]
+

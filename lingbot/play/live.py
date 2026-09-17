@@ -265,20 +265,29 @@ class DryPipe:
     pattern (chunk N's frames handed over at the start of chunk N+1, the last
     one after the loop) so LiveSource's plumbing runs end-to-end without a GPU."""
 
-    def __init__(self, n_chunks=3, chunk_seconds=0.05, h=464, w=832, decode_first=False):
+    def __init__(self, n_chunks=3, chunk_seconds=0.05, h=464, w=832, decode_first=False,
+                 boundary_seconds=0.0, ops_per_chunk=0):
         self.frame_sink = None
         self.pose_provider = None
         self.chunk_gate = None
         self.poses = []  # what the provider returned per chunk (tests)
         self.decode_first = decode_first  # LINGBOT_DECODE_FIRST: per-latent emission at the end of the chunk
         self.n_chunks, self.chunk_seconds, self.h, self.w = n_chunks, chunk_seconds, h, w
+        # boundary_seconds: host-side setup time at the start of each rollout (the real pipeline: 0.5-0.9 s).
+        # ops_per_chunk: small torch ops per chunk, each releasing and reacquiring the GIL like the pipeline's
+        # kernel launches do, so a presenter that busy-spins shows up here as it does on the GPU.
+        self.boundary_seconds, self.ops_per_chunk = boundary_seconds, ops_per_chunk
 
     def generate(self, prompt, img, action_path, chunk_size=4, **kw):
         t0s, pending = [], None
+        time.sleep(self.boundary_seconds)
         for c in range(self.n_chunks):
             if getattr(self, "chunk_gate", None) is not None:
                 self.chunk_gate(c)
             t0s.append(time.monotonic())
+            x = torch.zeros(8)
+            for _ in range(self.ops_per_chunk):
+                x = x + 1
             if pending is not None:
                 self.frame_sink(c - 1, pending, None, t0s[c - 1])
             if self.pose_provider is not None:  # same point as the real loop: before the chunk's denoise
