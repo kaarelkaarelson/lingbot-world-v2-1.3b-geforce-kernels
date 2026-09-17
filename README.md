@@ -1,6 +1,6 @@
 # LingBot-World 2.0 (1.3B) — GeForce kernels
 
-Real-time [LingBot-World 2.0](https://github.com/Robbyant/lingbot-world-v2) (1.3B `causal_fast`) on one RTX 5090: **16.2 FPS as played** at 832×464, up from 5.5 FPS with the stock code, with the original Wan 2.1 decoder and no change to the model. Real time is 16 FPS.
+Real-time [LingBot-World 2.0](https://github.com/Robbyant/lingbot-world-v2) (1.3B `causal_fast`) on one RTX 5090: **17 FPS as played** at 832×464 (16.9–17.0 measured on a stock pod), up from 5.5 FPS with the stock code, with the original Wan 2.1 decoder and no change to the model. Real time is 16 FPS.
 
 This is the upstream repository at commit `1895d30` plus a set of inference patches, applied in-tree, with one command to run it. Everything here was measured on a RunPod RTX 5090 (32 GB); the measurements, the profiles and the quality checks live in [lingbot-world-v2-stream](https://github.com/kaarelkaarelson/lingbot-world-v2-stream).
 
@@ -8,44 +8,46 @@ This is the upstream repository at commit `1895d30` plus a set of inference patc
 |---|---|---|
 | Stock repo, fp32 Wan VAE | 2.87 + 1.05 = 3.9 | 5.7 |
 | `--preset exact` (DiT bit-identical to stock bf16) | 0.73 + 0.34 = 1.07 | 14.8 |
-| **`--preset fast` (default)** | **0.64 + 0.34 = 0.98** | **16.2** |
+| **`--preset fast` (default)** | **0.62 + 0.33 = 0.95** | **16.9–17.0** |
 
 "As played" is what a streaming loop pays per second of video: four denoising steps plus the decode of 16 frames. The denoise loop alone runs at 25 FPS.
 
 ## Quick start
 
-Linux x86_64, an NVIDIA driver with CUDA 12.8 (driver ≥ 570), one RTX 5090 — measured on Ubuntu 22.04/24.04. Windows via WSL2 is expected to work (same Linux wheels over the Windows driver) but has not been tested; native Windows is not supported (the prebuilt kernels are Linux wheels). Reports welcome. Python 3.12 is fetched by `setup.sh` through `uv` if the system lacks it; the torch wheels bring their own CUDA runtime, so the host only needs the driver.
+One RTX 5090 (32 GB), Linux x86_64 or Windows via WSL2 (untested — reports welcome), NVIDIA driver ≥ 570, a Hugging Face token for the weights.
 
 ```bash
 git clone https://github.com/kaarelkaarelson/lingbot-world-v2-1.3b-geforce-kernels
 cd lingbot-world-v2-1.3b-geforce-kernels
-HF_TOKEN=hf_... ./setup.sh   # venv, pinned torch 2.8 + cu128, prebuilt sm_120 kernels, ~15 GB of weights, warm-up
+HF_TOKEN=hf_... ./setup.sh     # ~15 min once: Python 3.12, torch, prebuilt kernels, 18 GB of weights, compile warm-up
 . .venv/bin/activate
-lingbot play                 # a window on the world model; drive it with the keyboard
+lingbot play                   # ~35 s of warm-up, then a window on the world at 16 FPS
 ```
-
-`lingbot play` opens an 832×464 window and starts the world from `examples/03/image.jpg`. The first rollout's first 6 chunks warm up the compiled graphs (~10 s with the `setup.sh` cache, minutes on a cold one; the window title shows the progress); after that the model responds to the keys at 16 FPS. Nothing leaves the machine: no browser, no network, no codec. The frames go from the GPU to a pinned host buffer to the window.
 
 | Key | Action |
 |---|---|
-| `W` `A` `S` `D` | move forward / left / back / right (walk; hold `Shift` to run) |
+| `W` `A` `S` `D` | move (hold `Shift` to run) |
 | `Q` `E` | down / up |
-| `←` `→` `↑` `↓` | look left / right / up / down (45°/s); dragging the mouse also looks |
-| `R` | reset: restart the world from the image |
+| `←` `→` `↑` `↓` | look (45°/s); mouse drag also looks |
+| `R` | restart the world from the image |
 | `Esc` | quit |
 
-The window title and the terminal print a HUD once a second: the FPS shown, the seconds per chunk (one chunk = 16 frames = 1 s of video), and key→pixel, the time from a keydown to the first frame shown of the latent it landed in, measured on every tap. Flags: `--image me.jpg` for your own first frame, `--input-mode hold` for zero-order-hold input (held keys act from the next chunk's first frame, releases overshoot up to one chunk; the default `history` replays each key edge into the latent it was made in), `--frame_num` for the rollout length (default 361 frames; the world restarts from the image after that), `lingbot play --help` for the rest.
+Measured on a stock RunPod RTX 5090 (2026-09-17): `lingbot bench` 16.9–17.0 FPS as played, `lingbot play` 16.9 FPS with key→pixel 1.58 s p50 (the window shows it live). Nothing leaves the machine: no browser, no network, no codec.
 
 ```bash
-lingbot bench   # 22 s clip from examples/03 -> outputs/, prints s/chunk and the FPS as played
-lingbot clip --image me.jpg --action_path my_poses/ --prompt "…"   # offline generation, any generate.py flag
+lingbot bench                                                       # 22 s clip -> outputs/, prints s/chunk and FPS as played
+lingbot clip --image me.jpg --action_path my_poses/ --prompt "…"    # offline generation, any generate.py flag
+lingbot play --image me.jpg --input-mode hold                       # your own first frame; hold-mode input
 ```
 
-`lingbot bench` and `lingbot clip` are `generate.py` with `run.sh`'s defaults (`./run.sh` still works and calls `lingbot clip`). `my_poses/` holds `poses.npy` (one OpenCV camera-to-world 4×4 per output frame) and `intrinsics.npy`, in the format of `examples/*/`.
+## Details
 
-`setup.sh` needs your own Hugging Face token: the weights (`robbyant/lingbot-world-v2-1.3b-causal-fast`, plus the Wan VAE and T5 from the 14B release) are downloaded from Hugging Face and are not redistributed here. The first run compiles the DiT and the decoder (~2 min, cached in `.inductor_cache/`); `setup.sh` does that warm-up for you. The first run of each new prompt encodes it with T5-XXL once (~30 s) and caches the embedding under `weights/…/t5_cache/`.
-
-No display (a cloud pod): `SDL_VIDEODRIVER=dummy lingbot play --headless-seconds 60` runs the real model without a window for 60 s after the warm-up, taps `W` every 2.5 s and prints the same HUD and a summary (warm-up and play time, s/chunk, FPS as played, key→pixel; `underruns` counts frame periods with nothing to show, a rollout boundary costs a few).
+- `setup.sh` fetches Python 3.12 through `uv` if the system lacks it; the torch wheels carry their own CUDA runtime, so the host needs only the driver. The weights (`robbyant/lingbot-world-v2-1.3b-causal-fast` + the Wan VAE and T5 from the 14B release) come from Hugging Face with your token and are not redistributed here.
+- First `play` after `setup.sh`: ~35 s of warm-up (compiled graphs from `.inductor_cache/`); on a cold cache ~2.5 min. Each new prompt is T5-encoded once (~30 s) and cached.
+- The HUD (window title and terminal, once a second): FPS shown, seconds per chunk (a chunk = 16 frames = 1 s of video), key→pixel = keydown to the first shown frame of the latent it landed in. `--input-mode hold`: held keys act from the next chunk's first frame, releases overshoot by up to one chunk; the default `history` replays each key edge into the latent it was made in. `--frame_num` sets the rollout length (default 361 frames; the world restarts from the image after it).
+- `lingbot bench` / `lingbot clip` are `generate.py` with `run.sh`'s defaults (`./run.sh` still works). `my_poses/` = `poses.npy` (one OpenCV camera-to-world 4×4 per output frame) + `intrinsics.npy`, as in `examples/*/`.
+- No display (a cloud pod): `SDL_VIDEODRIVER=dummy lingbot play --headless-seconds 120` runs the real model without a window, taps `W` every 2.5 s and prints the HUD and a summary (warm-up, s/chunk, FPS, key→pixel, underruns).
+- Native Windows is not supported (the prebuilt kernels are Linux wheels).
 
 ## Presets
 
