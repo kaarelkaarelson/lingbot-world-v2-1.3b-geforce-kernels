@@ -28,6 +28,7 @@ else
 fi
 $PIP install -q torch==2.8.0 torchvision==0.23.0 --index-url https://download.pytorch.org/whl/cu128
 $PIP install -q -r requirements.txt
+$PIP install -q --no-deps -e .   # the `lingbot` command (play / bench / clip); deps are the pinned requirements above
 
 echo "== prebuilt kernels (sm_120, cp312, torch 2.8) =="
 mkdir -p wheels
@@ -55,6 +56,7 @@ if cc != (12, 0):
 PY
 
 echo "== warm-up (compiles the DiT and the VAE decoder once; cached in .inductor_cache) =="
-./run.sh --frame_num 49 --bench
+lingbot clip --frame_num 49 --bench
 echo
-echo "READY. Generate a clip:   ./run.sh --frame_num 361 --bench"
+echo "READY.  Play:   lingbot play      (WASD / arrows in the window, R reset, Esc quit)"
+echo "        Bench:  lingbot bench     (22 s clip from examples/03, s/chunk and FPS as played)"

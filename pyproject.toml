@@ -40,17 +40,17 @@ dev = [
     "huggingface-hub[cli]"
 ]
 
+[project.scripts]
+lingbot = "lingbot.cli:main"
+
 [project.urls]
 homepage = "https://technology.robbyant.com/lingbot-world-v2"
 documentation = "https://github.com/robbyant/lingbot-world-v2"
 repository = "https://github.com/robbyant/lingbot-world-v2"
 huggingface = "https://huggingface.co/robbyant/lingbot-world-v2-base-cam"
 
-[tool.setuptools]
-packages = ["wan"]
-
-[tool.setuptools.package-data]
-"wan" = ["**/*.py"]
+[tool.setuptools.packages.find]
+include = ["wan*", "lingbot*"]
 
 [tool.black]
 line-length = 88
