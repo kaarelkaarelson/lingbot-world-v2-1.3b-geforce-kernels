@@ -1,0 +1,36 @@
+# To-do
+
+## Benchmark other engines that run this model (apples-to-apples FPS on one RTX 5090)
+
+Goal: put our 16.2 FPS "as played" (4 steps, 832×464, original Wan decoder) next to every other
+public engine's number for the *same* checkpoint on the *same* card, same metric (seconds per
+1 s chunk = 4 denoising steps + decode of 16 frames; the denoise loop alone is a different number).
+None of these has been run by us yet; the notes are what the research pass found.
+
+| Engine | What it runs | Known settings / claims | To do |
+|---|---|---|---|
+| [SGLang](https://github.com/sgl-project/sglang) (diffusion / "realtime" LingBot recipe) | LingBot-World 2 via its diffusion serving path; config seen: shift 5, timesteps `[1000,750,500,250]` warped, `local_attention_frames 45`, sink 3, chunk 3 | recipe targets 8 GPUs / server-class cards; streams JPEG over WebSocket | install on a 5090 pod, load the 1.3B `causal_fast`, run its realtime demo at 832×464, read its per-chunk timing; note chunk 3 vs our chunk 4 (chunk 3 is faster per chunk but was rejected here on sharpness) |
+| [vLLM-Omni](https://github.com/vllm-project/vllm-omni) | one session per (multi-GPU) server; `denoise_step()` per step | no single-GPU 5090 number published | same: single-GPU run if the model loads; record s/chunk and VRAM |
+| [NVIDIA FlashDreams](https://github.com/NVIDIA/flashdreams) (`integrations_v2/lingbot`) | LingBot cam2v at 16 fps, chunk 3 (`len_t=3`), window 63/0 or 15/3, NVENC WebRTC serving | shipped models need ~120 GB VRAM; the LingBot integration path may fit a 5090 | run its LingBot integration on the 5090; read `chunk_done{control_latency_ms}`; compare s/chunk at its chunk 3 |
+| [Reactor cookbook](https://github.com/reactor-team) (`models/lingbot-world-v2`) | production serving of this model: chunk 4, window 18 / sink 6, shift 10, timesteps `[0,179,358,679]` (v1's 14B schedule) | "sub-1 s latency at 16 fps", hosted ≈ $12/stream-h; multi-GPU | run the cookbook's adapter single-GPU if it exposes a local runner; otherwise record their published fps and note the schedule difference |
+| Upstream [`Robbyant/lingbot-world-v2`](https://github.com/Robbyant/lingbot-world-v2) `run_fast.sh` | the reference: `torchrun --nproc_per_node=2`, Ulysses + FSDP | 2-GPU recipe; our `--preset stock` is its single-GPU equivalent (5.7 FPS) | already in the README table |
+| Community forks | search GitHub for `lingbot-world-v2` forks / "causal_fast" mentions (TeleFuser, MoVerse students, Waypoint-style ports) | unknown | one search pass; list any repo with a runnable single-GPU path and its fps |
+
+Protocol for each: same pod image and driver as `setup.sh`, 361-frame clip from `examples/03`
+where the engine allows canned poses, steady-state s/chunk over chunks ≥ 6, peak VRAM, and the
+quality check from `lingbot-world-v2-stream/quality_metrics.py` on the output (MUSIQ / sharpness
+/ colour) so a faster number that comes from fewer steps or a tiny decoder is labelled as such.
+Publish the comparison as a table in the README with links to each engine's config.
+
+## Engine repo
+
+- Bring `wan/image2video.py` up to the streaming pipeline (per-latent emission, `LINGBOT_TIMESTEPS`,
+  late input sample, warm reset, record hook); move `live.py` + `control.py` from
+  `lingbot-world-v2-stream/stream/` in as `lingbot/play/`.
+- `lingbot play`: local window + keyboard (no codec, no network) — the gamer entry point.
+- `run.sh play`, README requirements (5090, Linux/WSL2, CUDA 12.8 driver, Python 3.12, ~20 GB disk,
+  first start ~3 min), then tag `v0.2.0`.
+- Certification on a fresh pod: `exact` preset identity (3 runs, one md5), 3-seed metric band for
+  `fast`; write the numbers into README from the run, not from the lab.
+- Fresh-user test of `setup.sh` on a stock RunPod image (Python 3.11 / CUDA 12.4 image is common:
+  document or handle `python3.12` install).
