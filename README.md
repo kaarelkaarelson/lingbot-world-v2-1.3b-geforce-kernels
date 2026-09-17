@@ -51,6 +51,12 @@ Every `fast` component is an inference-side change; the checkpoint, the sampler 
 
 The DiT is compute-bound at batch 1 (SageAttention at its kernel ceiling, FP8 GEMMs at 89 % of the 5090's peak), so one card serves one real-time stream; batching two streams gives each 8.5 FPS. Details, profiles and dead ends: `OPTIMIZATIONS.md` in lingbot-world-bench.
 
+## What was tried
+
+`OPTIMIZATIONS.md` is the full experiment log behind these numbers — every lever with its effect,
+whether it is lossless, and the dead ends with the reason (tiny decoders, CAS sharpening, KV ring
+buffer, KV quantisation, batching), so the design space does not have to be re-explored.
+
 ## Scope
 
 - One RTX 5090 (sm_120). The prebuilt `sageattention` and `flash_attn` wheels are for sm_120, CPython 3.12, torch 2.8. Other GPUs need those built from source; an RTX 4090 should run every patch (FP8 rowwise and SageAttention both support sm_89) at roughly 12 FPS and needs T5 on the CPU to fit 24 GB — untested.
