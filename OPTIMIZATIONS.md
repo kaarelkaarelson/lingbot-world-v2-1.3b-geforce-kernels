@@ -3,7 +3,7 @@
 This is the experiment record behind the numbers in the README: LingBot-World 2.0 (1.3B
 `causal_fast`) on one RTX 5090, from 5.5 FPS stock to 16.2 FPS as played with the original Wan 2.1
 decoder. It is copied from the lab repository
-([lingbot-world-bench](https://github.com/kaarelkaarelson/lingbot-world-bench), `OPTIMIZATIONS.md`),
+([lingbot-world-v2-stream](https://github.com/kaarelkaarelson/lingbot-world-v2-stream), `OPTIMIZATIONS.md`),
 where the raw timing tables, profiles, quality clips and red-team audits live; the pod/setup
 details in it refer to that repository's scripts. Read it as a map of the design space: every
 lever below is either in `--preset fast`, in `--preset exact`, or listed as a dead end with the
