@@ -616,3 +616,31 @@ Question: how many concurrent streams can one RTX 5090 serve, and does batching 
 **Answer.** One RTX 5090 serves **one real-time user** of this model. Batching does not change that: the GPU's output is ≈ 17 as-played frames/s no matter how the batch is arranged, and one user consumes 16 of them. Two users on one card each get 8.5 FPS; the 5 % launch saving is real but cannot be turned into a second real-time stream. Scaling is therefore linear in GPUs — N real-time users need N 5090s (plus a scheduler that pins one session per GPU, which is what TurboServe does for LongLive-class models and what LingBot/LongLive 2.0/Matrix-Game 3.0 do by giving the decoder its own GPU). Batching only makes sense for non-interactive use where 8 FPS per user is acceptable, and even then buys 5 %, not 2×. This is the opposite of LLM decode, where a batch of 1 leaves the GPU memory-bound and batching to 64–128 is nearly free (see the DSpark / speculative-decoding notes in `~/.superset/projects/deepseek-dspark`).
 
 **Housekeeping found on the way.** `bench_perf.py` referenced `env` outside `run_generate` (the audit's M4 change was never run end-to-end) — fixed via `args.run_env`; the B=1 row was re-parsed into `results.tsv`. `bench_perf.py`'s GPU-CSV parser also fails on a two-digit-year timestamp that this pod's `nvidia-smi` emitted once mid-run (`26/09/16 07:14:23.856`): not fixed, the B=2 and B=4 rows are log-only. On this host `pkill -f <script>` from an ssh one-liner kills the ssh session itself when the pattern appears in its own command line; a stray `generate.py` from that survived and caused the first B=2 OOM (25.6 GB held by the dead run) — use `pgrep -f "[g]enerate.py"` from a separate session.
+
+## 17. Re-profile of the shipped v0.2.0 stack against the "levers above the kernel" — pod 10 (2026-09-17)
+
+Question: with the release cut, is any layer above the kernel still worth work (batching, compiler fusion, caching, memory management, launch overhead — the standard list; quantization and step reduction excluded as already classified)? Three `lingbot clip --frame_num 193 --bench` runs on a stock RunPod RTX 5090 (driver 570.195, pod `yo9qf5st6fbdpw`): batch 1 with `LINGBOT_PROFILE` over chunks 8–10, batch 2 (`LINGBOT_BATCH=2`), batch 1 unprofiled as the control. Report: `lingbot-world-v2-stream/bench_results/profile_shipped_v020_pod10.txt`.
+
+Control: DiT 0.649 s + VAE 0.339 s per chunk → 16.2 FPS as played (§15: 0.640 + 0.336). Profiled window: 3 chunks = 1.933 s wall, GPU busy 1.894 s (**98.0 %**), 21 546 kernels, 85 gaps ≥ 20 µs totalling 8 ms, host syncs 2.
+
+| Lever | Measured, per chunk | Headroom | Verdict |
+|---|---|---|---|
+| Launch overhead / host syncs | idle 0.013 s (1.3 %); largest gap 0.7 ms | 0.013 s — the whole prize of CUDA graphs | saturated |
+| Compiler fusion coverage | unfused elementwise/norm/copy **0.001 s**; Inductor-fused 0.092 s in 3 441 launches | the 0.092 s is bandwidth-bound work, not missed fusion | saturated |
+| Memory management (KV window shift = the paged-attention analogue) | memcpy/memset 0.002 s | 0 | saturated |
+| Prefix / conditioning caching (text K/V once, RoPE table, camera MLP per chunk, T5 on disk) | cross-attn FA2 0.017 s, bf16 GEMMs 0.001 s, T5 absent from the loop | ≤ 0.01 s | saturated |
+| Prefill analogue (`cache_write`, the 5th forward) | 0.122 s, same cost as a denoise step | model semantics (the KV write), not scheduling | n/a |
+| Batching | batch 2: 1.249 s/chunk = 1.93× batch 1 → 0.625 s per stream (+3.7 % throughput, 2× latency) | none for one player | saturated (§16 confirmed) |
+
+Kernel-level roofline of the same chunk (peaks: RTX 5090 INT8 838 TOPS, FP8 dense 419 TFLOP/s, FP16 dense 209.5 TFLOP/s, 1.79 TB/s):
+
+| Kernel (author) | s/chunk | Achieved | Utilisation | Floor at 100 % |
+|---|---|---|---|---|
+| SageAttention 2.2 INT8-QK/FP8-PV (Thu et al.), 151 TFLOP/chunk | 0.278 | 543 TOPS | 65 % | 0.180 |
+| FP8 GEMMs `_scaled_mm` (cuBLASLt/CUTLASS), ~78 TFLOP/chunk | 0.201 | ~390 TFLOP/s | ~90 % | 0.186 |
+| Sage per-call K/V re-quant (Sage) | 0.039 | — | quant-once would leave 0.013 | 0.013 |
+| Inductor fused elementwise (torch.compile) | 0.092 | bandwidth-bound | ~70 % est. | ~0.06 |
+| VAE decoder convolution (cuDNN fp16), 52 TFLOP/chunk | 0.30 | 173 TFLOP/s | 83 % | 0.248 |
+| **Chunk** | **0.98** | | **~65 % of absolute peak** | **~0.70 s → 23 FPS** |
+
+Reading: every lever above the kernel is at its floor (each ≤ 1.3 % of the chunk). The remaining time is inside four kernels written by others, three of them at 83–90 % of peak. The only kernel with real headroom is attention (65 % of the INT8 peak): a hand-written sm_120 kernel reaching 90 % would take 0.278 → ~0.20 s, **+8 % on the chunk, 16.2 → ~17.5 FPS**. On consumer Blackwell (`mma.sync` only, no tcgen05/wgmma) that is a multi-week CUDA effort for about one frame per second, which is why this log ends at the kernel boundary without a custom kernel. What would move the number more is model-side: the fifth forward (0.12 s), the KV window (attention scales with it), and the 4-step schedule.
