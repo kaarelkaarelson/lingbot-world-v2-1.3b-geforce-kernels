@@ -1,0 +1,12 @@
+[project]
+name = "lingbot13"
+version = "0.0.1"
+dependencies = []
+[project.entry-points."flashdreams.applications_v2"]
+"cam2v-lingbot-1p3b" = "lingbot13:create_app"
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"
+[tool.setuptools]
+packages = ["lingbot13"]
+package-dir = { lingbot13 = "." }
