@@ -34,3 +34,29 @@ Publish the comparison as a table in the README with links to each engine's conf
   `fast`; write the numbers into README from the run, not from the lab.
 - Fresh-user test of `setup.sh` on a stock RunPod image (Python 3.11 / CUDA 12.4 image is common:
   document or handle `python3.12` install).
+
+## Distribution: one command for gamers
+
+No .dmg — no Mac has an RTX 5090. In order of effort:
+
+1. `uvx --from git+https://github.com/kaarelkaarelson/lingbot-world-v2-1.3b-geforce-kernels@vX lingbot play`
+   (Linux / WSL2): declare the sm_120 wheels as direct-URL deps in `pyproject.toml` (GitHub release
+   assets), weights from Hugging Face on first run. Check whether the `robbyant/…` repos are
+   public — if so, drop the `HF_TOKEN` requirement, the biggest friction in `setup.sh`.
+2. Docker image on GHCR with Python, CUDA runtime, both wheels and the **pre-compiled Inductor cache**
+   (no 2-min warm-up); weights baked in or on a mounted volume. Same image = RunPod one-click
+   template. UI = the browser client on `localhost:8765` (no geography; at localhost bitrates the
+   codec loss vanishes).
+3. Windows: PowerShell bootstrap (enable WSL2 + Ubuntu, run route 1 inside), later a portable zip
+   with embedded Python + community sm_120 Windows wheels for SageAttention / flash_attn (Inno
+   Setup or MSIX).
+4. Launchers: a Pinokio install script; Stability Matrix package.
+
+Every route needs: public weights, the shipped compile cache, and an early hard check that prints
+"needs an RTX 5090 (sm_120), driver ≥ 570" instead of failing ten minutes in.
+
+## Findings from the fresh-user test of `setup.sh` (2026-09-17, stock RunPod image)
+
+- Stock image = Python 3.11 / CUDA 12.4 toolkit: `python3.12 not found` → fixed, `setup.sh` fetches
+  3.12 via `uv`; `add-apt-repository` is broken on that image, so no deadsnakes.
+- RunPod's direct SSH port never published on this pod; the relay works only as an interactive PTY.
