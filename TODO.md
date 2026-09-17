@@ -35,6 +35,15 @@ Publish the comparison as a table in the README with links to each engine's conf
 - Fresh-user test of `setup.sh` on a stock RunPod image (Python 3.11 / CUDA 12.4 image is common:
   document or handle `python3.12` install).
 
+## Launch target: local RTX 5090 owners (mostly Windows)
+
+Priority order for the launch: (1) Windows 11 via WSL2 — PowerShell bootstrap that enables WSL2 +
+Ubuntu and runs `setup.sh` + `lingbot play` inside (WSLg gives the window; driver ≥ 570 exposes the
+card); needs ONE verification run on a real Windows 5090 box before launch — none available in
+this project, so recruit a tester or launch labelled "WSL2: please report"; (2) Linux:
+`setup.sh` + `lingbot play` (verified on the pod); (3) native Windows later (embedded Python +
+community sm_120 Windows wheels). Local play = no codec, no network: key→pixel ≈ 1.0–1.2 s at 16 fps.
+
 ## Distribution: one command for gamers
 
 No .dmg — no Mac has an RTX 5090. In order of effort:
