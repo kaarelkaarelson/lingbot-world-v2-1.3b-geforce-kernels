@@ -31,7 +31,8 @@ def test_loop_presents_frames_and_consumes_a_key_edge(monkeypatch):
     assert len(pipe.poses) == 3 and any(abs(p[:, 2, 3]).max() > 0 for p in pipe.poses)
     assert stats["taps"] >= 1 and len(stats["k2p_onset_ms"]) == 1 and stats["lost"] == 0
     assert 300 < stats["k2p_onset_ms"][0] < 3000
-    assert stats["underruns"] == 0 and any("key->pixel onset p50" in h for h in hud)
+    assert stats["underruns"] == 0 and any("key->pixel onset" in h for h in hud)
+    assert "key->pixel onset p50" in window.summary_lines(stats)[-1]
 
 
 def test_key_to_pixel_attribution_matches_the_onset_echo():
@@ -126,3 +127,19 @@ def test_esc_stops_generation_and_joins_the_threads(monkeypatch, tmp_path):
     assert not src._gen.is_alive() and not src._host.is_alive() and src.error is None
     assert src._timing_f.closed and len(tsv.read_text().splitlines()) == len(src.timing_rows) + 1
 
+
+def test_headless_seconds_and_taps_count_from_ready(monkeypatch):
+    _env(monkeypatch)
+    monkeypatch.setenv("LINGBOT_WARM_CHUNKS", "2")   # ready at chunk 2: two chunks of warm-up first
+    st = InputState()
+    pipe = DryPipe(n_chunks=3, chunk_seconds=0.3, h=8, w=8, decode_first=True)
+    src = LiveSource(pipe, None, "/dev/null", "p", width=8, height=8, control=st, loop=True)
+    disp = window.open_display(8, 8, "t", headless=True)
+    t0 = time.monotonic()
+    stats = window.play_loop(src, st, disp, seconds=1.0, scripted=True, hud=lambda *a: None)
+    dt = time.monotonic() - t0
+    assert 0.5 < stats["warmup_s"] < 1.5 and stats["warmup_dropped"] > 0
+    assert dt >= stats["warmup_s"] + 1.0 and 0.9 < stats["played_s"] < 1.6   # the 1.0 s ran after the warm-up
+    # no tap was registered before ready, so none could land on a discarded warm-up chunk
+    assert stats["lost"] == 0 and stats["taps"] >= 1
+    assert "warmup=" in window.summary_lines(stats)[0]

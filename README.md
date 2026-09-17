@@ -45,7 +45,7 @@ lingbot clip --image me.jpg --action_path my_poses/ --prompt "…"   # offline g
 
 `setup.sh` needs your own Hugging Face token: the weights (`robbyant/lingbot-world-v2-1.3b-causal-fast`, plus the Wan VAE and T5 from the 14B release) are downloaded from Hugging Face and are not redistributed here. The first run compiles the DiT and the decoder (~2 min, cached in `.inductor_cache/`); `setup.sh` does that warm-up for you. The first run of each new prompt encodes it with T5-XXL once (~30 s) and caches the embedding under `weights/…/t5_cache/`.
 
-No display (a cloud pod): `SDL_VIDEODRIVER=dummy lingbot play --headless-seconds 60` runs the real model without a window, taps `W` every 2.5 s and prints the same HUD and a summary (s/chunk, FPS as played, key→pixel).
+No display (a cloud pod): `SDL_VIDEODRIVER=dummy lingbot play --headless-seconds 60` runs the real model without a window for 60 s after the warm-up, taps `W` every 2.5 s and prints the same HUD and a summary (warm-up and play time, s/chunk, FPS as played, key→pixel; `underruns` counts frame periods with nothing to show, a rollout boundary costs a few).
 
 ## Presets
 

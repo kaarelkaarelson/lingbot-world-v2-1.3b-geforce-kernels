@@ -10,6 +10,7 @@ import logging
 import os
 import subprocess
 import sys
+import time
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 EXAMPLE = "examples/03"   # relative to REPO (bench/clip run there; play resolves the defaults below)
@@ -66,7 +67,8 @@ def _play_parser() -> argparse.ArgumentParser:
     p.add_argument("--prefill", type=int, default=6, help="frames queued before playout starts")
     p.add_argument("--timing_tsv", default=None, help="write per-chunk timing rows")
     p.add_argument("--headless-seconds", type=float, default=None, metavar="N",
-                   help="no display (SDL_VIDEODRIVER=dummy), scripted W taps every 2.5 s, run N s, print the HUD stats: the pod check")
+                   help="no display (SDL_VIDEODRIVER=dummy), scripted W taps every 2.5 s, run N s after the warm-up, "
+                        "print the HUD stats: the pod check")
     p.add_argument("--dry", action="store_true", help="CPU: DryPipe stand-in for the model, headless, 3 chunks (the CI check)")
     return p
 
@@ -92,7 +94,9 @@ def cmd_play(argv: list[str]) -> int:
         os.environ.update(_env())   # run.sh's TORCHINDUCTOR_CACHE_DIR and cuda PATH
         img = Image.open(args.image).convert("RGB")
         width, height = output_size(*img.size)
+        t0 = time.monotonic()
         pipe = build_pipe(args.ckpt_dir, args.assets_dir, preset=args.preset)
+        logging.info("pipeline built in %.1f s", time.monotonic() - t0)
         src = LiveSource(pipe, img, args.action_path, args.prompt, frame_num=args.frame_num, chunk_size=args.chunk_size,
                          seed=args.seed, timing_tsv=args.timing_tsv, width=width, height=height, loop=True, control=control)
     display = window.open_display(width, height, "lingbot play", headless=headless)

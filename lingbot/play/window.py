@@ -246,14 +246,16 @@ def _fmt_ms(xs, last=None):
 
 def play_loop(src, control: InputState, display, *, fps: int = 16, prefill: int = 6, trough: float = 2.0,
               surplus: str = "rate", seconds: float | None = None, scripted: bool = False, hud=log.info) -> dict:
-    """Run until Esc / window close, `seconds` elapsed, or the source ends. Returns the HUD stats."""
+    """Run until Esc / window close, `seconds` elapsed since the source became ready, or the source ends.
+    Returns the HUD stats. Key edges (and the scripted taps) count from `src.ready` too: a tap made during
+    the warm-up would land in a chunk the gate discards and be scored as lost."""
     playout: collections.deque = collections.deque()
     rc = RateController(src.frames_per_chunk, target_trough=trough, surplus=surplus)
     rc.nominal_fps = float(fps)
     k2p = KeyToPixel()
     stop = threading.Event()
     done = threading.Event()
-    stats = dict(presented=0, underruns=0, warmup_dropped=0, throttled=0)
+    stats = dict(presented=0, underruns=0, warmup_dropped=0, throttled=0, warmup_s=None, played_s=0.0)
     hold = int(0.5 * src.frames_per_chunk) + int(trough)
 
     def throttle():  # --surplus wait: the next chunk starts once the frames queued or on the GPU are down to `hold`
@@ -284,7 +286,8 @@ def play_loop(src, control: InputState, display, *, fps: int = 16, prefill: int 
     threading.Thread(target=consume, name="play-consume", daemon=True).start()
     interval = 1.0 / fps
     t_start = time.monotonic()
-    script = ScriptedKeys(t_start) if scripted else None
+    t_ready = None
+    script = None
     seq, prev_held = 0, set()
     next_due = None
     t_hud = t_start
@@ -293,16 +296,22 @@ def play_loop(src, control: InputState, display, *, fps: int = 16, prefill: int 
     try:
         while True:
             now = time.monotonic()
+            if t_ready is None and src.ready.is_set():
+                t_ready = now
+                stats["warmup_s"] = now - t_start
+                if scripted:
+                    script = ScriptedKeys(now)
             held, reset, quit_, dx, dy = (script or display).poll()
             if script is not None:
                 display.poll()  # keep the window's event queue drained (Esc still quits)
             if held and not prev_held:
                 seq += 1
-                k2p.keydown(seq, now)
+                if t_ready is not None:
+                    k2p.keydown(seq, now)
             control.update(held, dx, dy, seq=seq, reset=reset)
             prev_held = held
             k2p.absorb(control.consumed)
-            if quit_ or (seconds is not None and now - t_start >= seconds) or src.error is not None:
+            if quit_ or (seconds is not None and t_ready is not None and now - t_ready >= seconds) or src.error is not None:
                 break
             if done.is_set() and not playout:
                 break
@@ -343,6 +352,8 @@ def play_loop(src, control: InputState, display, *, fps: int = 16, prefill: int 
                 time.sleep(dt)
     finally:
         stop.set()
+        if t_ready is not None:
+            stats["played_s"] = time.monotonic() - t_ready
         src.close()
         display.close()
     rows = src.timing_rows
@@ -355,8 +366,10 @@ def play_loop(src, control: InputState, display, *, fps: int = 16, prefill: int 
 
 def summary_lines(stats: dict, fps: int = 16) -> list[str]:
     spc = stats["s_per_chunk_median"]
+    warm = "never ready" if stats["warmup_s"] is None else f"{stats['warmup_s']:.1f}s"
     lines = [f"PLAY chunks={stats['chunks']} rollouts={stats['rollouts']} presented={stats['presented']} "
-             f"underruns={stats['underruns']} dropped_chunks={stats['dropped_chunks']} throttled={stats['throttled']}"]
+             f"underruns={stats['underruns']} dropped_chunks={stats['dropped_chunks']} throttled={stats['throttled']} "
+             f"warmup={warm} played={stats['played_s']:.1f}s"]
     if spc:
         lines.append(f"PLAY s_per_chunk_median={spc:.3f} -> as-played FPS {stats['frames_per_chunk'] / spc:.1f} (real time = {fps})")
     lines.append(f"PLAY key->pixel onset {_fmt_ms(stats['k2p_onset_ms'])} visible {_fmt_ms(stats['k2p_vis_ms'])} "
