@@ -208,6 +208,25 @@ def load_dit_model(model_cls, checkpoint_dir, subfolder, config, torch_dtype,
     return model.to(dtype=torch_dtype)
 
 
+def parse_timesteps(env_value, default, num_train_timesteps=1000):
+    """LINGBOT_TIMESTEPS: comma-separated scheduler indices (e.g. "0,179,358") overriding
+    `timesteps_index`; fewer entries = fewer denoising forwards (the t=0 cache-write forward
+    stays). Must be strictly increasing ints in [0, num_train_timesteps)."""
+    if env_value is None or env_value.strip() == "":
+        return list(default)
+    try:
+        idx = [int(x) for x in env_value.split(",")]
+    except ValueError as e:
+        raise ValueError(f"LINGBOT_TIMESTEPS={env_value!r}: expected comma-separated ints") from e
+    if not idx:
+        raise ValueError(f"LINGBOT_TIMESTEPS={env_value!r}: empty")
+    if any(i < 0 or i >= num_train_timesteps for i in idx):
+        raise ValueError(f"LINGBOT_TIMESTEPS={env_value!r}: indices must be in [0, {num_train_timesteps})")
+    if any(b <= a for a, b in zip(idx, idx[1:])):
+        raise ValueError(f"LINGBOT_TIMESTEPS={env_value!r}: indices must be strictly increasing")
+    return idx
+
+
 class WanI2VCausal:
 
     def __init__(
@@ -345,6 +364,13 @@ class WanI2VCausal:
         # frame_sink(chunk_id, frames[C,F,H,W] in [-1,1], vae_stream, chunk_gen_start)
         # on the VAE stream instead of being kept for the whole-clip video.
         self.frame_sink = None
+        # stream/control.py: pose_provider(chunk_id, n_latents) -> [n,4,4] framewise relative
+        # OpenCV poses for the chunk; replaces the precomputed poses.npy trajectory (frame_num
+        # then sets the rollout length) and may raise to end the rollout early.
+        self.pose_provider = None
+        # stream/live.py: chunk_gate(chunk_id) is called before each chunk's pose sample and denoise; it may block
+        self.chunk_gate = None
+        self._y_cache = None  # (key, y): the I2V conditioning latent is a pure function of (image, F, h, w)
 
         dit_device = torch.device('cpu') if (dit_fsdp or use_sp) else self.device
         if self.infer_mode == "causal_fast":
@@ -883,8 +909,10 @@ class WanI2VCausal:
         
         assert action_path is not None, "action_path is required"
         c2ws = np.load(os.path.join(action_path, "poses.npy")) # opencv coordinate
-        len_c2ws = ((len(c2ws) - 1) // 4) * 4 + 1
         frame_num = ((frame_num - 1) // 4) * 4 + 1
+        if self.pose_provider is not None:
+            c2ws = np.tile(np.eye(4, dtype=c2ws.dtype), (frame_num, 1, 1))  # placeholder; replaced per chunk
+        len_c2ws = ((len(c2ws) - 1) // 4) * 4 + 1
         frame_num = min(frame_num, len_c2ws)
         c2ws = c2ws[:frame_num]
 
@@ -935,8 +963,15 @@ class WanI2VCausal:
 
         # 2. Prepare timesteps
         self.scheduler.set_timesteps(self.num_train_timesteps, shift=shift)
+        timesteps_index = parse_timesteps(os.environ.get("LINGBOT_TIMESTEPS"), timesteps_index, self.num_train_timesteps)
+        if os.environ.get("LINGBOT_TIMESTEPS") and not getattr(self, "_timesteps_logged", False):
+            logging.info(f"LINGBOT_TIMESTEPS={timesteps_index}: {len(timesteps_index)} denoising forwards + 1 cache write per chunk")
+            self._timesteps_logged = True
         timesteps = self.scheduler.timesteps[timesteps_index]
         syncfree = os.environ.get("LINGBOT_SYNCFREE") == "1"
+        # "1": sync before the pose sample in play mode; "force": also without a pose provider (bit-identity check)
+        late_sample = os.environ.get("LINGBOT_LATE_SAMPLE", "1") if self.device.type == "cuda" else ""
+        late_sample = late_sample if late_sample in ("1", "force") else ""
         if syncfree:
             sched_dev = self._syncfree_schedule(timesteps, os.environ.get("LINGBOT_DIT_FUSION") == "1")
 
@@ -991,15 +1026,20 @@ class WanI2VCausal:
             wasd_action_tensor = rearrange(wasd_action_tensor, 'b (f h w) c -> b c f h w', f=lat_f, h=lat_h, w=lat_w).to(self.param_dtype)
             c2ws_plucker_emb = torch.cat([c2ws_plucker_emb, wasd_action_tensor], dim=1)
 
-        y = self.vae.encode([
-            torch.concat([
-                torch.nn.functional.interpolate(
-                    img[None].cpu(), size=(h, w), mode='bicubic').transpose(
-                        0, 1),
-                torch.zeros(3, F - 1, h, w)
-            ],
-                         dim=1).to(self.device)
-        ])[0]
+        y_key = (hash(img.cpu().numpy().tobytes()), F, h, w)
+        if self._y_cache is not None and self._y_cache[0] == y_key:
+            y = self._y_cache[1]
+        else:
+            y = self.vae.encode([
+                torch.concat([
+                    torch.nn.functional.interpolate(
+                        img[None].cpu(), size=(h, w), mode='bicubic').transpose(
+                            0, 1),
+                    torch.zeros(3, F - 1, h, w)
+                ],
+                             dim=1).to(self.device)
+            ])[0]
+            self._y_cache = (y_key, y)
         y = torch.concat([msk, y])
 
         @contextmanager
@@ -1057,6 +1097,11 @@ class WanI2VCausal:
             vae_stream_on = os.environ.get("LINGBOT_VAE_STREAM") == "1" and self._vae_fused is not None
             if vae_stream_on:
                 vae_stream, dec_state, dec_pending, dec_frames = torch.cuda.Stream(), None, None, []
+            # LINGBOT_DECODE_FIRST=1: decode right after x0 on the side stream, overlapped with this
+            # chunk's cache-write forward only, then the main stream waits before the next chunk, so
+            # the chunk's frames are complete before the next forward and gen_start stays honest. (An
+            # async variant without the wait was tried; its only upside was ~40 ms of first-frame time.)
+            decode_first = os.environ.get("LINGBOT_DECODE_FIRST") == "1"
             if self.frame_sink is not None:
                 assert vae_stream_on, "frame_sink needs LINGBOT_VAE_STREAM=1 and LINGBOT_VAE_FUSED"
                 chunk_t0 = []
@@ -1079,12 +1124,24 @@ class WanI2VCausal:
                         record_shapes=True, with_flops=True)
                     prof.__enter__()
                 _rf_chunk = torch.profiler.record_function(f"chunk{chunk_id}"); _rf_chunk.__enter__()
+                if (self.pose_provider is not None or late_sample == "force") and late_sample and chunk_id > 0:
+                    # sample the input when the GPU can actually start this chunk: the host runs ~0.35 s ahead
+                    # (the previous chunk's latent 2-4 decodes + KV write are still queued) and the pageable
+                    # .to(device) below blocks on them anyway, so this moves the sample later at no cost
+                    torch.cuda.current_stream().synchronize()
+                if self.chunk_gate is not None:
+                    self.chunk_gate(chunk_id)   # stream/live.py: may block (just-in-time generation); before the pose sample
                 if self.frame_sink is not None:
                     chunk_t0.append(time.monotonic())
                 _rf = torch.profiler.record_function("prep"); _rf.__enter__()
                 current_latent = latents_chunk[chunk_id]
                 current_condition = condition_chunk[chunk_id]
                 current_c2ws_plucker_emb = c2ws_plucker_emb_chunk[chunk_id]
+                if self.pose_provider is not None:
+                    rel = torch.from_numpy(np.asarray(self.pose_provider(chunk_id, chunk_size), dtype=np.float32)).to(self.device)
+                    emb = get_plucker_embeddings(rel, Ks[:chunk_size], h, w)
+                    emb = rearrange(emb, 'f (h c1) (w c2) c -> (f h w) (c c1 c2)', c1=int(h // lat_h), c2=int(w // lat_w))
+                    current_c2ws_plucker_emb = rearrange(emb[None], 'b (f h w) c -> b c f h w', f=chunk_size, h=lat_h, w=lat_w).to(self.param_dtype)
 
                 dit_cond_dict = {
                     "c2ws_plucker_emb": current_c2ws_plucker_emb.chunk(1, dim=0),
@@ -1168,7 +1225,24 @@ class WanI2VCausal:
                         break
 
                 pred_latent_chunks.append(x0)
-                if vae_stream_on:
+                if vae_stream_on and decode_first:
+                    # LINGBOT_DECODE_FIRST=1: decode this chunk now, latent by latent, and hand each
+                    # latent's frames to the sink as they finish; the main stream then waits, so the
+                    # frames leave before the next forward instead of competing with it on a
+                    # saturated GPU (same throughput, first frame ~0.5 s earlier).
+                    with torch.profiler.record_function("vae_decode_first"), torch.no_grad():
+                        vae_stream.wait_stream(torch.cuda.current_stream())
+                        with torch.cuda.stream(vae_stream):
+                            x0.record_stream(vae_stream)
+                            off = 0
+                            for li in range(x0.shape[1]):
+                                fr, dec_state = self._vae_fused.decode_step(x0[:, li:li + 1], dec_state)
+                                if self.frame_sink is not None:
+                                    self.frame_sink(chunk_id, fr, vae_stream, chunk_t0[chunk_id], off)
+                                else:
+                                    dec_frames.append(fr)
+                                off += fr.shape[1]
+                elif vae_stream_on:
                     dec_pending = x0
                 _rf = torch.profiler.record_function("cache_write"); _rf.__enter__()
 
@@ -1186,6 +1260,8 @@ class WanI2VCausal:
                            cross_attn_first_call=False,
                            **kwargs)
                 _rf.__exit__(None, None, None)
+                if vae_stream_on and decode_first:
+                    torch.cuda.current_stream().wait_stream(vae_stream)  # decode done before the next chunk
                 if bench_timing:
                     with torch.profiler.record_function("bench_sync"):
                         torch.cuda.synchronize()
@@ -1221,7 +1297,9 @@ class WanI2VCausal:
                 torch.cuda.empty_cache()
 
             if self.rank == 0:
-                if os.environ.get("LINGBOT_VAE_WARM") == "1" and (self._vae_cl or self._vae_half or self._vae_fused):
+                if os.environ.get("LINGBOT_VAE_WARM") == "1" and (self._vae_cl or self._vae_half or self._vae_fused) \
+                        and not getattr(self, "_vae_warmed", False):
+                    self._vae_warmed = True
                     # one-time compile/autotune of the decoder happens here, not in the timed decode
                     with torch.no_grad():
                         if self._vae_fused is not None:
@@ -1242,12 +1320,13 @@ class WanI2VCausal:
                 if vae_stream_on:
                     with torch.no_grad():
                         vae_stream.wait_stream(torch.cuda.current_stream())
-                        with torch.cuda.stream(vae_stream):
-                            fr, dec_state = self._vae_fused.decode_step(dec_pending, dec_state)
-                            if self.frame_sink is not None:
-                                self.frame_sink(num_inference_chunk - 1, fr, vae_stream, chunk_t0[-1])
-                            else:
-                                dec_frames.append(fr)
+                        if dec_pending is not None:
+                            with torch.cuda.stream(vae_stream):
+                                fr, dec_state = self._vae_fused.decode_step(dec_pending, dec_state)
+                                if self.frame_sink is not None:
+                                    self.frame_sink(num_inference_chunk - 1, fr, vae_stream, chunk_t0[-1])
+                                else:
+                                    dec_frames.append(fr)
                         torch.cuda.current_stream().wait_stream(vae_stream)
                         videos = [torch.cat(dec_frames, 1)] if dec_frames else [None]
                 elif self._flashvaed is not None:
