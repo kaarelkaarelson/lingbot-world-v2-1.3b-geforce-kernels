@@ -6,7 +6,18 @@ Real-time [LingBot-World 2.0](https://github.com/Robbyant/lingbot-world-v2) (1.3
 
 `lingbot play dragon`, 4 s of the 22 s clip at native 832×464 (the GIF plays at 12 fps; the counter is the real per-chunk generation rate, 16 frames ÷ that chunk's DiT + VAE time). Full clip: [dragon_16fps.mp4](https://github.com/kaarelkaarelson/lingbot-world-v2-1.3b-geforce-kernels/releases/download/v0.2.0/dragon_16fps.mp4) (22 MB).
 
-Other engines that run this checkpoint, measured out of the box on the same card at the same settings: NVIDIA FlashDreams 8.6 FPS, LightX2V 7.7, SGLang 6.5, upstream single-GPU 6.0 ([`bench/engines/`](bench/engines/README.md), with one clip played at each engine's cadence).
+Other engines that run this checkpoint, measured out of the box on the same card at the same settings (832×464, 4 steps, 16-frame chunks, Wan VAE; steady state after warm-up, one run each):
+
+| Engine | s per chunk | FPS as played | Our optimizations | What it ran on the 5090 |
+|---|---|---|---|---|
+| **This repo, `--preset fast`** | 0.98 | **16.1** | all | FP8 GEMMs, SageAttention, fused + compiled DiT, fused fp16 VAE |
+| This repo, `--preset exact` | 1.07 | 14.8 | all but the one-row time MLP | DiT bit-identical to upstream |
+| NVIDIA FlashDreams `c1889e0` | 1.85 | 8.65 | none | bf16 cuDNN SDPA, its compile + CUDA graphs; window 20/6, static camera |
+| LightX2V `69018c9` | 2.07 | 7.73 | none | torch SDPA, bf16 DiT and VAE, eager |
+| SGLang v0.5.17 | 2.48 | 6.45 | none | torch SDPA, bf16 eager, fp32 VAE |
+| Upstream single-GPU (`--preset stock`) | 2.68 | 6.0 | none | bf16 FlashAttention-2 eager, fp32 VAE |
+
+Scripts, deviations and raw logs: [`bench/engines/`](bench/engines/README.md), with one clip played at each engine's cadence.
 
 This is the upstream repository at commit `1895d30` plus a set of inference patches, applied in-tree, with one command to run it. Everything here was measured on a RunPod RTX 5090 (32 GB); the measurements, the profiles and the quality checks live in [lingbot-world-v2-stream](https://github.com/kaarelkaarelson/lingbot-world-v2-stream).
 
