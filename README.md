@@ -49,6 +49,16 @@ lingbot play dragon
 | `R` | restart the world from the image |
 | `Esc` | quit |
 
+### Commands
+
+| | |
+|---|---|
+| `lingbot play [scene]` | a window on the world; scenes: `lake` (default), `wall`, `stonehenge`, `alley`, `castle`, `dragon` |
+| `lingbot play --image me.jpg --prompt "..."` | your own world from any image |
+| `SDL_VIDEODRIVER=dummy lingbot play --headless-seconds 120` | no display (a cloud pod): same model, no window, taps `W` and prints the HUD summary |
+| `lingbot bench` | the 22 s clip to `outputs/`, prints s/chunk and FPS |
+| `lingbot clip --image me.jpg --action_path my_poses/ --prompt "..."` | offline generation from a camera path; any `generate.py` flag |
+
 | Configuration | DiT + VAE, s per chunk | FPS as played |
 |---|---|---|
 | Original paper's code, single GPU (`--preset stock`) | <!-- n:dit_paper -->1.62<!-- /n --> + <!-- n:vae_paper -->1.06<!-- /n --> = <!-- n:s_paper -->2.68<!-- /n --> | <!-- n:fps_paper -->6.0<!-- /n --> |
@@ -126,12 +136,12 @@ Lossless: four of the six steps are bit-identical to the paper's code; FP8 and t
 
 ## Using it
 
-- Scenes, as the first argument to `play`: `lake` (default), `wall` (Great Wall), `stonehenge`, `alley` (game-engine city), `castle` and `dragon` (dragon rider over a jungle) — each an image + prompt + camera intrinsics from upstream's examples. Your own world: `--image me.jpg --prompt "one sentence describing the scene"`.
+- Each scene is an image + prompt + camera intrinsics from upstream's examples: `wall` is the Great Wall, `alley` a game-engine city, `dragon` a dragon rider over a jungle. For your own image, `--prompt` is one sentence describing the scene.
 - `setup.sh` fetches Python 3.12 through `uv` if the system lacks it; the torch wheels carry their own CUDA runtime, so the host needs only the driver. The weights (`robbyant/lingbot-world-v2-1.3b-causal-fast` + the Wan VAE and T5 from the 14B release) come from Hugging Face with your token and are not redistributed here.
 - The warm-up loads compiled graphs from `.inductor_cache/`; on a cold cache it takes ~2.5 min instead. Each new prompt is T5-encoded once (~30 s) and cached. Any image works (it is resized to the 480×832 pixel budget keeping its aspect ratio); the first image with a new aspect ratio compiles once more (~2.5 min).
 - The HUD (window title and terminal, once a second): FPS shown, seconds per chunk (a chunk = 16 frames = 1 s of video), key→pixel = keydown to the first shown frame of the latent it landed in. `--input-mode hold`: held keys act from the next chunk's first frame, releases overshoot by up to one chunk; the default `history` replays each key edge into the latent it was made in. `--frame_num` sets the rollout length (default 361 frames; the world restarts from the image after it).
-- Without a window: `lingbot bench` writes the 22 s clip to `outputs/` and prints s/chunk and FPS as played; `lingbot clip --image me.jpg --action_path my_poses/ --prompt "..."` generates offline (`generate.py` with `run.sh`'s defaults, any `generate.py` flag; `./run.sh` still works). `my_poses/` = `poses.npy` (one OpenCV camera-to-world 4×4 per output frame) + `intrinsics.npy`, as in `examples/*/`.
-- No display (a cloud pod): `--headless-seconds 120` with `SDL_VIDEODRIVER=dummy` runs the real model without a window, taps `W` every 2.5 s and prints the HUD and a summary (warm-up, s/chunk, FPS, key→pixel, underruns).
+- `bench` and `clip` are `generate.py` with `run.sh`'s defaults (`./run.sh` still works). `my_poses/` = `poses.npy` (one OpenCV camera-to-world 4×4 per output frame) + `intrinsics.npy`, as in `examples/*/`.
+- The headless run taps `W` every 2.5 s; its summary lists warm-up, s/chunk, FPS, key→pixel and underruns.
 - Native Windows is not supported (the prebuilt kernels are Linux wheels).
 
 ## Presets
