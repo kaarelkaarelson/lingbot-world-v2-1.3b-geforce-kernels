@@ -43,7 +43,7 @@ HF_TOKEN=hf_... ./setup.sh && . .venv/bin/activate
 lingbot play dragon
 ```
 
-The first start compiles for about 2.5 min, later starts take 35 s. Any image works, and a new prompt takes 30 s to encode once. The window title shows the FPS.
+The first start compiles for about 2.5 min, later starts take 35 s.
 
 ### Commands
 
