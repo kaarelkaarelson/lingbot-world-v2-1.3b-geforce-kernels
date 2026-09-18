@@ -9,7 +9,7 @@
 # ATTN=torch_sdpa|flash_attn2|sage_attn2 rewrites the three *_attn_*_type keys (all three; sage_attn2 is int8-QK, not lossless).
 set -euo pipefail
 SCENE=${1:-03}; ATTN=${ATTN:-torch_sdpa}
-LX=${LX:-/workspace/lx}; E=${EXAMPLES:-/workspace/lingbot-world-v2-1.3b-geforce-kernels/examples}/$SCENE
+LX=${LX:-/workspace/lx}; E=${EXAMPLES:-/workspace/lingbot-world-realtime/examples}/$SCENE
 HERE=$(cd "$(dirname "$0")" && pwd); P="$LX/.venv/bin/python"; OUT="$LX/out"; mkdir -p "$OUT"
 CFG="$OUT/config_${SCENE}_${ATTN}.json"; LOG="$OUT/lx_${SCENE}_${ATTN}.log"; MP4="$OUT/out.mp4"
 export PROFILING_DEBUG_LEVEL=2 DTYPE=BF16 PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True

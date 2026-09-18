@@ -48,7 +48,7 @@ community sm_120 Windows wheels). Local play = no codec, no network: key→pixel
 
 No .dmg — no Mac has an RTX 5090. In order of effort:
 
-1. `uvx --from git+https://github.com/kaarelkaarelson/lingbot-world-v2-1.3b-geforce-kernels@vX lingbot play`
+1. `uvx --from git+https://github.com/kaarelkaarelson/lingbot-world-realtime@vX lingbot play`
    (Linux / WSL2): declare the sm_120 wheels as direct-URL deps in `pyproject.toml` (GitHub release
    assets), weights from Hugging Face on first run. Check whether the `robbyant/…` repos are
    public — if so, drop the `HF_TOKEN` requirement, the biggest friction in `setup.sh`.
