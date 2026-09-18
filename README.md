@@ -9,6 +9,32 @@ A 1.3B world model running at **<!-- n:fps_ours -->16.1<!-- /n --> FPS on one RT
 
 ![lingbot play dragon at 16 fps](docs/dragon_16fps.gif)
 
+## Results
+
+One RTX 5090, 832×464, 4 denoising steps, 16-frame chunks (one second of video), the original Wan 2.1 decoder; steady state after warm-up. "As played" is 16 frames divided by the time to denoise and decode one chunk.
+
+| Configuration | DiT + VAE, s per chunk | FPS as played |
+|---|---|---|
+| Original paper's code, single GPU (`--preset stock`) | <!-- n:dit_paper -->1.62<!-- /n --> + <!-- n:vae_paper -->1.06<!-- /n --> = <!-- n:s_paper -->2.68<!-- /n --> | <!-- n:fps_paper -->6.0<!-- /n --> |
+| `--preset exact` (DiT bit-identical to the paper's bf16 model) | <!-- n:dit_exact -->0.73<!-- /n --> + <!-- n:vae_exact -->0.34<!-- /n --> = <!-- n:s_exact -->1.07<!-- /n --> | <!-- n:fps_exact -->14.8<!-- /n --> |
+| **`--preset fast` (default)** | **<!-- n:dit_ours -->0.64<!-- /n --> + <!-- n:vae_ours -->0.34<!-- /n --> = <!-- n:s_ours -->0.98<!-- /n -->** | **<!-- n:fps_ours -->16.1<!-- /n -->** |
+
+Measured on stock RunPod RTX 5090 pods (2026-09-17): `lingbot bench` <!-- n:fps_bench_range -->16.1–17.0<!-- /n --> FPS as played depending on the scene (the tables use the dragon clip), `lingbot play` <!-- n:fps_play -->16.9<!-- /n --> FPS with key→pixel <!-- n:key_to_pixel_s -->1.58<!-- /n --> s p50 (the window shows it live). Nothing leaves the machine: no browser, no network, no codec.
+
+The same checkpoint in other engines, each run as it ships on the same card and settings, one run each:
+
+<!-- table:engines -->
+| Engine | s per chunk | FPS as played | Ours vs it | What it ran on the 5090 |
+|---|---|---|---|---|
+| **Ours** | 0.98 | **16.1** | — | FP8 GEMMs, SageAttention, fused + compiled DiT, fused fp16 VAE |
+| SGLang Diffusion `v0.5.17` | 2.48 | 6.45 | **2.5×** | torch SDPA, bf16 eager, fp32 VAE |
+| NVIDIA FlashDreams `c1889e0` | 1.85 | 8.65 | **1.9×** | bf16 cuDNN SDPA, its compile + CUDA graphs; window 20/6, static camera |
+| LightX2V `69018c9` | 2.07 | 7.73 | **2.1×** | torch SDPA, bf16 DiT and VAE, eager |
+| Original paper's code, single GPU | 2.68 | 6.0 | **2.7×** | bf16 FlashAttention-2 eager, fp32 VAE |
+<!-- /table:engines -->
+
+Nothing of ours was added to another engine; speedup is FPS as played, ours ÷ theirs. Scripts, per-engine deviations and raw logs: [`bench/engines/`](bench/engines/README.md).
+
 ## Quick start
 
 ### Setup
@@ -45,32 +71,6 @@ lingbot play
 | Minimum | RTX 4090, 24 GB | untested: every patch supports sm_89, expect ~12 FPS; needs `sageattention` and `flash_attn` built from source and T5 on the CPU to fit |
 
 Linux x86_64 or Windows via WSL2 (untested — reports welcome), NVIDIA driver ≥ 570, a Hugging Face token for the weights.
-
-## Results
-
-One RTX 5090, 832×464, 4 denoising steps, 16-frame chunks (one second of video), the original Wan 2.1 decoder; steady state after warm-up. "As played" is 16 frames divided by the time to denoise and decode one chunk.
-
-| Configuration | DiT + VAE, s per chunk | FPS as played |
-|---|---|---|
-| Original paper's code, single GPU (`--preset stock`) | <!-- n:dit_paper -->1.62<!-- /n --> + <!-- n:vae_paper -->1.06<!-- /n --> = <!-- n:s_paper -->2.68<!-- /n --> | <!-- n:fps_paper -->6.0<!-- /n --> |
-| `--preset exact` (DiT bit-identical to the paper's bf16 model) | <!-- n:dit_exact -->0.73<!-- /n --> + <!-- n:vae_exact -->0.34<!-- /n --> = <!-- n:s_exact -->1.07<!-- /n --> | <!-- n:fps_exact -->14.8<!-- /n --> |
-| **`--preset fast` (default)** | **<!-- n:dit_ours -->0.64<!-- /n --> + <!-- n:vae_ours -->0.34<!-- /n --> = <!-- n:s_ours -->0.98<!-- /n -->** | **<!-- n:fps_ours -->16.1<!-- /n -->** |
-
-Measured on stock RunPod RTX 5090 pods (2026-09-17): `lingbot bench` <!-- n:fps_bench_range -->16.1–17.0<!-- /n --> FPS as played depending on the scene (the tables use the dragon clip), `lingbot play` <!-- n:fps_play -->16.9<!-- /n --> FPS with key→pixel <!-- n:key_to_pixel_s -->1.58<!-- /n --> s p50 (the window shows it live). Nothing leaves the machine: no browser, no network, no codec.
-
-The same checkpoint in other engines, each run as it ships on the same card and settings, one run each:
-
-<!-- table:engines -->
-| Engine | s per chunk | FPS as played | Ours vs it | What it ran on the 5090 |
-|---|---|---|---|---|
-| **Ours** | 0.98 | **16.1** | — | FP8 GEMMs, SageAttention, fused + compiled DiT, fused fp16 VAE |
-| SGLang Diffusion `v0.5.17` | 2.48 | 6.45 | **2.5×** | torch SDPA, bf16 eager, fp32 VAE |
-| NVIDIA FlashDreams `c1889e0` | 1.85 | 8.65 | **1.9×** | bf16 cuDNN SDPA, its compile + CUDA graphs; window 20/6, static camera |
-| LightX2V `69018c9` | 2.07 | 7.73 | **2.1×** | torch SDPA, bf16 DiT and VAE, eager |
-| Original paper's code, single GPU | 2.68 | 6.0 | **2.7×** | bf16 FlashAttention-2 eager, fp32 VAE |
-<!-- /table:engines -->
-
-Nothing of ours was added to another engine; speedup is FPS as played, ours ÷ theirs. Scripts, per-engine deviations and raw logs: [`bench/engines/`](bench/engines/README.md).
 
 ## Optimizations
 
