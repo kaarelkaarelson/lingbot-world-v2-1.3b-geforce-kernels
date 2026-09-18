@@ -27,12 +27,12 @@ def speedup(fps):
 # ---------- Markdown ----------
 
 def md_engines():
-    out = ["| Engine | s per chunk | FPS as played | Ours vs it | What it ran on the 5090 |", "|---|---|---|---|---|"]
+    out = ["| Engine | s / chunk | FPS | Ours vs it |", "|---|---|---|---|"]
     for r in DATA["engines"]["rows"]:
-        name = f"**{r['engine']}**" if r.get("ours") else r["engine"] + (f" `{r['version']}`" if r.get("version") and r["version"] != "single GPU" else (", single GPU" if r.get("version") == "single GPU" else ""))
+        name = "**Ours**" if r.get("ours") else r["engine"]
         fps = f"**{r['fps']}**" if r.get("ours") else f"{r['fps']}"
         sp = "—" if r.get("ours") else f"**{speedup(r['fps'])}**"
-        out.append(f"| {name} | {r['s_per_chunk']:.2f} | {fps} | {sp} | {r['ran']} |")
+        out.append(f"| {name} | {r['s_per_chunk']:.2f} | {fps} | {sp} |")
     return "\n".join(out)
 
 
