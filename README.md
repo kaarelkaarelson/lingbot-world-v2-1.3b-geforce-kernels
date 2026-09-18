@@ -49,10 +49,8 @@ HF_TOKEN=hf_... ./setup.sh && . .venv/bin/activate
 
 ### Play
 
-~35 s of warm-up, then a window on the world at 16 FPS.
-
 ```bash
-lingbot play
+lingbot play dragon
 ```
 
 | Key | Action |
