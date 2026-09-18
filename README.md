@@ -13,7 +13,12 @@ The `dragon` scene, 4 s of the 22 s clip at native 832×464 (the GIF plays at 12
 
 ## Quick start
 
-One RTX 5090 (32 GB), Linux x86_64 or Windows via WSL2 (untested — reports welcome), NVIDIA driver ≥ 570, a Hugging Face token for the weights.
+| | GPU | |
+|---|---|---|
+| Recommended | RTX 5090, 32 GB | everything here was measured on it; `setup.sh` ships prebuilt kernels for it (sm_120) |
+| Minimum | RTX 4090, 24 GB | untested: every patch supports sm_89, expect ~12 FPS; needs `sageattention` and `flash_attn` built from source and T5 on the CPU to fit |
+
+Linux x86_64 or Windows via WSL2 (untested — reports welcome), NVIDIA driver ≥ 570, a Hugging Face token for the weights.
 
 ### Setup
 
@@ -22,7 +27,7 @@ Once, ~15 min: Python 3.12, torch, the prebuilt kernels, 18 GB of weights, one c
 ```bash
 git clone https://github.com/kaarelkaarelson/lingbot-world-v2-realtime
 cd lingbot-world-v2-realtime
-HF_TOKEN=hf_... ./setup.sh
+HF_TOKEN=hf_... ./setup.sh && . .venv/bin/activate
 ```
 
 ### Play
@@ -30,7 +35,7 @@ HF_TOKEN=hf_... ./setup.sh
 ~35 s of warm-up, then a window on the world at 16 FPS.
 
 ```bash
-. .venv/bin/activate && lingbot play
+lingbot play
 ```
 
 | Key | Action |
@@ -147,7 +152,7 @@ Lossless: four of the six steps are bit-identical to the paper's code; FP8 and t
 
 ## Scope
 
-- One RTX 5090 (sm_120). The prebuilt `sageattention` and `flash_attn` wheels are for sm_120, CPython 3.12, torch 2.8. Other GPUs need those built from source; an RTX 4090 should run every patch (FP8 rowwise and SageAttention both support sm_89) at roughly 12 FPS and needs T5 on the CPU to fit 24 GB — untested.
+- The prebuilt `sageattention` and `flash_attn` wheels are for sm_120, CPython 3.12, torch 2.8; other GPUs need those built from source.
 - Clip generation from an image and a camera path, and a local window driven by the keyboard (`lingbot play`). Browser streaming (WebSocket / WebRTC transports, the pacer and codec measurements) lives in lingbot-world-v2-stream; `lingbot/play/` is its model-side half (`control.py`, `live.py`, the pacer) moved here.
 - Multi-GPU (`--ulysses_size`, FSDP) is upstream's code and is untouched but unmeasured here.
 
