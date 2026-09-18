@@ -23,7 +23,7 @@ A 1.3B world model running at **<!-- n:fps_ours -->16.1<!-- /n --> FPS on one RT
 
 ![the same clip at each engine's measured cadence](docs/engines_same_clip_cadence.gif)
 
-Measured with `lingbot bench` on a stock RunPod RTX 5090 (2026-09-17): <!-- n:fps_ours -->16.1<!-- /n --> FPS on the dragon clip the tables use, <!-- n:fps_bench_lake -->17.0<!-- /n --> on the default lake scene.
+Measured with `lingbot bench` on a stock RunPod RTX 5090 (2026-09-17).
 
 ## Quick start
 
