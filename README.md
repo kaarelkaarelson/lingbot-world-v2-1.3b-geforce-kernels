@@ -10,12 +10,22 @@ A 1.3B video world model running at **<!-- n:fps_ours -->16.1<!-- /n --> FPS on 
 
 One RTX 5090 (32 GB), Linux x86_64 or Windows via WSL2 (untested — reports welcome), NVIDIA driver ≥ 570, a Hugging Face token for the weights.
 
+Setup, once (~15 min: Python 3.12, torch, the prebuilt kernels, 18 GB of weights, one compile warm-up):
+
 ```bash
 git clone https://github.com/kaarelkaarelson/lingbot-world-v2-realtime
 cd lingbot-world-v2-realtime
-HF_TOKEN=hf_... ./setup.sh     # ~15 min once: Python 3.12, torch, prebuilt kernels, 18 GB of weights, compile warm-up
+HF_TOKEN=hf_... ./setup.sh
+```
+
+Play (~35 s of warm-up, then a window on the world at 16 FPS):
+
+```bash
 . .venv/bin/activate
-lingbot play                   # ~35 s of warm-up, then a window on the world at 16 FPS
+lingbot play                                  # the default scene, lake
+lingbot play dragon                           # a scene by name: lake, wall, stonehenge, alley, castle, dragon
+lingbot play --image me.jpg --prompt "..."    # your own first frame and prompt
+lingbot play --input-mode hold                # held keys act from the next chunk instead of replaying key edges
 ```
 
 | Key | Action |
@@ -26,10 +36,11 @@ lingbot play                   # ~35 s of warm-up, then a window on the world at
 | `R` | restart the world from the image |
 | `Esc` | quit |
 
+Without a window:
+
 ```bash
-lingbot bench                                                       # 22 s clip -> outputs/, prints s/chunk and FPS as played
-lingbot clip --image me.jpg --action_path my_poses/ --prompt "…"    # offline generation, any generate.py flag
-lingbot play stonehenge --input-mode hold                           # a scene by name; hold-mode input
+lingbot bench                                                       # 22 s clip to outputs/, prints s/chunk and FPS as played
+lingbot clip --image me.jpg --action_path my_poses/ --prompt "..."  # offline generation, any generate.py flag
 ```
 
 ## Results
