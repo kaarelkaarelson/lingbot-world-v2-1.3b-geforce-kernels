@@ -140,17 +140,9 @@ The result is lossless. Four of the six steps are bit identical to the paper's c
 | `exact` | ours, with the DiT latents bit identical to the paper's bf16 model | <!-- n:s_exact -->1.07<!-- /n --> | <!-- n:fps_exact -->14.8<!-- /n --> |
 | **`fast`** (default) | ours, FP8 linears, SageAttention, compiled and fused DiT, fused fp16 decoder | **<!-- n:s_ours -->0.98<!-- /n -->** | **<!-- n:fps_ours -->16.1<!-- /n -->** |
 
-## Scope
-
-- The prebuilt `sageattention` and `flash_attn` wheels are for sm_120, CPython 3.12, torch 2.8; other GPUs need those built from source.
-- Clip generation from an image and a camera path, and a local window driven by the keyboard (`lingbot play`). Browser streaming (WebSocket / WebRTC transports, the pacer and codec measurements) lives in lingbot-world-v2-stream; `lingbot/play/` is its model-side half (`control.py`, `live.py`, the pacer) moved here.
-- Multi-GPU (`--ulysses_size`, FSDP) is upstream's code and is untouched but unmeasured here.
-
 ## Tests
 
-`tests/` holds fp32 CPU equivalence checks of the fused decoder and the fused DiT against the stock modules (no GPU): `python tests/test_vae_fused_cpu.py`, `python tests/test_vae_subpixel_cpu.py`, `python tests/test_dit_fusion_cpu.py`.
-
-`pytest tests/test_play_*.py` runs the `lingbot play` checks without a GPU: the input integrator and camera planner, the frame plumbing on a CPU stand-in for the model (`DryPipe`), the pacer, and `lingbot play --dry`, which runs the window loop headless for 3 chunks and checks that frames were shown and a key tap reached the model.
+`pytest tests/` runs on the CPU, no GPU needed. It checks the fused decoder and DiT against the stock modules and runs `lingbot play --dry` on a stand in model.
 
 ## License and credit
 
