@@ -6,7 +6,7 @@ Real-time [LingBot-World 2.0](https://github.com/Robbyant/lingbot-world-v2) (1.3
 
 `lingbot play dragon`, 4 s of the 22 s clip at native 832×464 (the GIF plays at 12 fps; the counter is the real per-chunk generation rate, 16 frames ÷ that chunk's DiT + VAE time). Full clip: [dragon_16fps.mp4](https://github.com/kaarelkaarelson/lingbot-world-v2-1.3b-geforce-kernels/releases/download/v0.2.0/dragon_16fps.mp4) (22 MB).
 
-Other engines that run this checkpoint, measured out of the box on the same card at the same settings: NVIDIA FlashDreams 8.6 FPS, LightX2V 7.7, SGLang 6.5, upstream single-GPU 6.0 ([`bench/engines/`](bench/engines/README.md)).
+Other engines that run this checkpoint, measured out of the box on the same card at the same settings: NVIDIA FlashDreams 8.6 FPS, LightX2V 7.7, SGLang 6.5, upstream single-GPU 6.0 ([`bench/engines/`](bench/engines/README.md), with one clip played at each engine's cadence).
 
 This is the upstream repository at commit `1895d30` plus a set of inference patches, applied in-tree, with one command to run it. Everything here was measured on a RunPod RTX 5090 (32 GB); the measurements, the profiles and the quality checks live in [lingbot-world-v2-stream](https://github.com/kaarelkaarelson/lingbot-world-v2-stream).
 
