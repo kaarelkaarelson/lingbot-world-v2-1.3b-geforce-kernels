@@ -136,7 +136,7 @@ Lossless: four of the six steps are bit-identical to the paper's code; FP8 and t
 | DiT latents, exact preset | reference | **bit-identical** |
 <!-- /table:quality -->
 
-`OPTIMIZATIONS.md` is the full log behind the table: every experiment with its measurement, the profiles and rooflines, and the levers that were measured and rejected.
+`OPTIMIZATIONS.md` is the full log: every experiment, its measurement, the profiles, and the levers that were rejected.
 
 ## Using it
 
