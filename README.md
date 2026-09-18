@@ -80,7 +80,7 @@ Linux x86_64 or Windows via WSL2, NVIDIA driver ≥ 570, a Hugging Face token fo
 
 ## Optimizations
 
-Every change is inference-side: the checkpoint, the sampler (4 steps, 4-latent chunks, 18-frame KV window) and the decoder architecture are upstream's. The work went top-down through the standard layers, cheapest and most general first, measured at each step, and stopped at the kernel boundary. Seconds per chunk after each step, in the order applied (a chunk is 16 frames, one second of video); each gain was measured on its own, the last step closes to the measured total.
+Nothing about the model changed: the checkpoint, the sampler (4 steps, 4-latent chunks, 18-frame KV window) and the decoder are upstream's. The stack was worked top-down, cheapest and most general layer first, each step measured, stopping at the kernel boundary. Seconds per chunk after each step, in the order applied; a chunk is 16 frames, one second of video.
 
 <!-- table:ladder -->
 | Step | Before | After | s/chunk |
@@ -94,7 +94,7 @@ Every change is inference-side: the checkpoint, the sampler (4 steps, 4-latent c
 | **Total** | 6.0&nbsp;FPS | **16.1&nbsp;FPS** | **2.68&nbsp;→&nbsp;0.98** |
 <!-- /table:ladder -->
 
-Original paper's code vs ours, per chunk (host syncs per three chunks; GPU busy and kernel launches from the profiler traces of both configurations, `OPTIMIZATIONS.md` §13 and §17):
+The original paper's code and ours, per chunk. GPU busy and kernel launches come from the profiler traces of both (`OPTIMIZATIONS.md` §13 and §17); host syncs are counted over three chunks.
 
 <!-- table:baseline -->
 | | Original paper's code | Ours |
@@ -108,7 +108,7 @@ Original paper's code vs ours, per chunk (host syncs per three chunks; GPU busy 
 | Host syncs | 110 | **2** |
 <!-- /table:baseline -->
 
-What is left runs inside four kernels written by others; three are near the card's peak. The one with room is attention: a hand-written kernel at 90 % of peak would gain about one frame per second, so there is no custom kernel (`OPTIMIZATIONS.md` §17). RTX 5090 peaks from NVIDIA's specification.
+What is left runs in four kernels written by others, three of them near the card's peak. Attention has the most room: a hand-written kernel at 90 % of peak would gain about one frame per second, so there is none (`OPTIMIZATIONS.md` §17). Peaks are NVIDIA's RTX 5090 specification.
 
 <!-- table:peaks -->
 | Kernel | Reached | Peak on RTX 5090 | of peak |
@@ -119,7 +119,7 @@ What is left runs inside four kernels written by others; three are near the card
 | Fused elementwise | ~1.3 TB/s | 1.8 TB/s memory | **~70 %** |
 <!-- /table:peaks -->
 
-Lossless: four of the six steps are bit-identical to the paper's code; FP8 and the attention kernel were checked on identical inputs. PSNR, SSIM and LPIPS are the same latents through the paper's fp32 decoder and ours, after the mp4 encoder; the rest are no-reference metrics on the generated clips, first / last second where drift matters (`quality_summary.tsv`, exp15).
+Lossless: four of the six steps are bit-identical to the paper's code; FP8 and the attention kernel were checked on identical inputs. PSNR, SSIM and LPIPS compare the same latents through the paper's fp32 decoder and ours; the rest are no-reference metrics on the generated clips, first and last second (`quality_summary.tsv`, exp15).
 
 <!-- table:quality -->
 | | Original paper's code | Ours |
