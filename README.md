@@ -1,6 +1,13 @@
 # LingBot-World 2.0 realtime
 
-A 1.3B video world model running at **<!-- n:fps_ours -->16.1<!-- /n --> FPS on one RTX 5090** — <!-- n:speedup_paper -->2.7×<!-- /n --> the original paper's code, same weights, same decoder. Write-up with the videos: [kaarelkaarelson.com/lingbot](https://kaarelkaarelson.com/lingbot/).
+<p align="center">
+  <a href="https://kaarelkaarelson.com/lingbot/"><b>Blog</b></a> &nbsp;·&nbsp;
+  <a href="https://arxiv.org/abs/2607.07534">Paper</a> &nbsp;·&nbsp;
+  <a href="https://huggingface.co/robbyant/lingbot-world-v2-1.3b-causal-fast">Weights</a> &nbsp;·&nbsp;
+  <a href="https://github.com/kaarelkaarelson/lingbot-world-v2-realtime/releases/tag/v0.2.0">Videos</a>
+</p>
+
+A 1.3B video world model running at **<!-- n:fps_ours -->16.1<!-- /n --> FPS on one RTX 5090** — <!-- n:speedup_paper -->2.7×<!-- /n --> the original paper's code, same weights, same decoder.
 
 ![lingbot play dragon at 16 fps](docs/dragon_16fps.gif)
 
