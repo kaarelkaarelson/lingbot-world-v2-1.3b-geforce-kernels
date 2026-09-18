@@ -3,7 +3,7 @@ requires = ["setuptools>=61.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "lingbot-world-realtime"
+name = "lingbot-world-v2-realtime"
 version = "0.1.0"
 description = "LingBot-World 2.0 1.3B at 16.2 FPS on one RTX 5090: upstream + inference kernels"
 authors = [

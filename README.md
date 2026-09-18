@@ -1,4 +1,4 @@
-# LingBot-World realtime
+# LingBot-World 2.0 realtime
 
 Write-up with the videos: [kaarelkaarelson.com/lingbot](https://kaarelkaarelson.com/lingbot/)
 
@@ -6,7 +6,7 @@ Real-time [LingBot-World 2.0](https://github.com/Robbyant/lingbot-world-v2) (1.3
 
 ![lingbot play dragon at 16 fps](docs/dragon_16fps.gif)
 
-`lingbot play dragon`, 4 s of the 22 s clip at native 832×464 (the GIF plays at 12 fps; the counter is the real per-chunk generation rate, 16 frames ÷ that chunk's DiT + VAE time). Full clip: [dragon_16fps.mp4](https://github.com/kaarelkaarelson/lingbot-world-realtime/releases/download/v0.2.0/dragon_16fps.mp4) (22 MB).
+`lingbot play dragon`, 4 s of the 22 s clip at native 832×464 (the GIF plays at 12 fps; the counter is the real per-chunk generation rate, 16 frames ÷ that chunk's DiT + VAE time). Full clip: [dragon_16fps.mp4](https://github.com/kaarelkaarelson/lingbot-world-v2-realtime/releases/download/v0.2.0/dragon_16fps.mp4) (22 MB).
 
 Other engines that run this checkpoint, measured out of the box on the same card at the same settings (832×464, 4 steps, 16-frame chunks, Wan VAE; steady state after warm-up, one run each):
 
@@ -37,8 +37,8 @@ This is the upstream repository at commit `1895d30` plus a set of inference patc
 One RTX 5090 (32 GB), Linux x86_64 or Windows via WSL2 (untested — reports welcome), NVIDIA driver ≥ 570, a Hugging Face token for the weights.
 
 ```bash
-git clone https://github.com/kaarelkaarelson/lingbot-world-realtime
-cd lingbot-world-realtime
+git clone https://github.com/kaarelkaarelson/lingbot-world-v2-realtime
+cd lingbot-world-v2-realtime
 HF_TOKEN=hf_... ./setup.sh     # ~15 min once: Python 3.12, torch, prebuilt kernels, 18 GB of weights, compile warm-up
 . .venv/bin/activate
 lingbot play                   # ~35 s of warm-up, then a window on the world at 16 FPS

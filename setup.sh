@@ -6,7 +6,7 @@
 # ./weights, and runs a short warm-up so the first real run is at full speed.
 set -euo pipefail
 cd "$(dirname "$0")"
-REL=${REL:-https://github.com/kaarelkaarelson/lingbot-world-realtime/releases/download/v0.1.0}
+REL=${REL:-https://github.com/kaarelkaarelson/lingbot-world-v2-realtime/releases/download/v0.1.0}
 PY=${PY:-python3.12}
 
 [ -n "${HF_TOKEN:-}" ] || { echo "HF_TOKEN is not set (https://huggingface.co/settings/tokens)"; exit 1; }

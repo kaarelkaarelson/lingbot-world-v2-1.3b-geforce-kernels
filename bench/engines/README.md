@@ -24,7 +24,7 @@ generation cadence, engine and FPS under each panel. The frames are the same by 
 only the timing is each engine's (every 16-frame chunk is held for that engine's measured seconds
 per chunk). Engines do not reproduce a seed, so this is a timing visualisation, not six renders:
 each engine's own output is in `lingbot-world-v2-stream/bench_results/engines/`. Full video:
-[engines_grid_same_clip.mp4](https://github.com/kaarelkaarelson/lingbot-world-realtime/releases/download/v0.2.0/engines_grid_same_clip.mp4)
+[engines_grid_same_clip.mp4](https://github.com/kaarelkaarelson/lingbot-world-v2-realtime/releases/download/v0.2.0/engines_grid_same_clip.mp4)
 (60 s: `fast` finishes the 22 s of world time at 21 s, upstream at 59 s).
 
 Raw logs, stats JSON and output clips: `lingbot-world-v2-stream/bench_results/engines/`.

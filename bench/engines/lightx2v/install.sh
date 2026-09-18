@@ -7,7 +7,7 @@
 set -euo pipefail
 LX=${LX:-/workspace/lx}; mkdir -p "$LX"; cd "$LX"
 LIGHTX2V_SHA=69018c92b0a42d9b0cf962a248fadbfe0cbc03de   # 2026-09-17, "feat: support pipefusion for flux2 (#1268)"
-WHL=https://github.com/kaarelkaarelson/lingbot-world-realtime/releases/download/v0.1.0
+WHL=https://github.com/kaarelkaarelson/lingbot-world-v2-realtime/releases/download/v0.1.0
 df -h /workspace / | sed 's/^/disk: /'
 command -v ~/.local/bin/uv >/dev/null || curl -LsSf https://astral.sh/uv/install.sh | sh >/dev/null
 U=~/.local/bin/uv
