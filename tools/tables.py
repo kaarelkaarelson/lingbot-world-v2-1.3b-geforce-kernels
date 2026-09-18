@@ -20,7 +20,7 @@ DATA = json.load(open(os.path.join(ROOT, "bench", "summary.json")))
 
 
 def speedup(fps):
-    ours = DATA["engines"]["rows"][0]["fps"]
+    ours = next(r["fps"] for r in DATA["engines"]["rows"] if r.get("ours"))
     return f"{ours / fps:.1f}×"
 
 
