@@ -5,7 +5,7 @@
   <a href="https://arxiv.org/abs/2607.07534">Original paper</a>
 </p>
 
-A 1.3B world model running at **<!-- n:fps_ours -->16.1<!-- /n --> FPS on one RTX 5090** — <!-- n:speedup_paper -->2.7×<!-- /n --> the original paper's code, same weights, same decoder.
+A 1.3B world model running at **<!-- n:fps_ours -->16.1<!-- /n --> FPS on one RTX 5090**. <!-- n:speedup_paper -->2.7×<!-- /n --> faster than the original paper's code with lossless performance.
 
 ![lingbot play dragon at 16 fps](docs/dragon_16fps.gif)
 
