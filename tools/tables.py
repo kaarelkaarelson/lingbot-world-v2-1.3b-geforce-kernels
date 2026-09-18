@@ -45,7 +45,8 @@ def md_baseline():
 
 def md_ladder():
     L = DATA["ladder"]
-    out = ["| Step | Before | After | s per chunk |", "|---|---|---|---|"]
+    nb = lambda x: x.replace(" ", "&nbsp;")
+    out = ["| Step | Before | After | s/chunk |", "|---|---|---|---|"]
     prev = L["start"]
     for r in L["rows"]:
         after = r["after"]
@@ -55,10 +56,10 @@ def md_ladder():
         if r.get("before_url"):
             t = r.get("before_link_text", before)
             before = before.replace(t, f"[{t}]({r['before_url']})")
-        out.append(f"| {r['step']} | {before} | {after} | {prev:.2f} → {r['after_s']:.2f} |")
+        out.append(f"| {nb(r['step'])} | {before} | {after} | {prev:.2f}&nbsp;→&nbsp;{r['after_s']:.2f} |")
         prev = r["after_s"]
     t = L["total"]
-    out.append(f"| **Total** | {t['before']} | **{t['after']}** | **{t['before_s']:.2f} → {t['after_s']:.2f}** |")
+    out.append(f"| **Total** | {nb(t['before'])} | **{nb(t['after'])}** | **{t['before_s']:.2f}&nbsp;→&nbsp;{t['after_s']:.2f}** |")
     return "\n".join(out)
 
 

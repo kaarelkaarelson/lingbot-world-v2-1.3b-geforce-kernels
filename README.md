@@ -88,15 +88,15 @@ Every `fast` component is an inference-side change; the checkpoint, the sampler 
 Every change is inference-side: the checkpoint, the sampler (4 steps, 4-latent chunks, 18-frame KV window) and the decoder architecture are upstream's. The work went top-down through the standard layers, cheapest and most general first, measured at each step, and stopped at the kernel boundary. Seconds per chunk after each step, in the order applied (a chunk is 16 frames, one second of video); each gain was measured on its own, the last step closes to the measured total.
 
 <!-- table:ladder -->
-| Step | Before | After | s per chunk |
+| Step | Before | After | s/chunk |
 |---|---|---|---|
-| Host syncs | CPU↔GPU sync on every layer | bookkeeping on the GPU | 2.68 → 2.57 |
-| Decoder | [Wan 2.1 VAE](https://arxiv.org/abs/2503.20314) in fp32 | fp16 with [sub-pixel](https://arxiv.org/abs/1609.05158) upsampling | 2.57 → 1.95 |
-| Compiler | PyTorch eager | one compiled graph | 1.95 → 1.68 |
-| Matmuls | bf16 linears | FP8 rowwise via [torchao](https://github.com/pytorch/ao/tree/main/torchao/float8) | 1.68 → 1.47 |
-| Attention | FlashAttention-2 | [SageAttention 2.2](https://arxiv.org/abs/2505.21136) | 1.47 → 1.04 |
-| Kernel fusion | one kernel per operation | fused kernels for norm, RoPE, residual and FP8 quant | 1.04 → 0.98 |
-| **Total** | 6.0 FPS | **16.1 FPS** | **2.68 → 0.98** |
+| Host&nbsp;syncs | CPU↔GPU sync on every layer | bookkeeping on the GPU | 2.68&nbsp;→&nbsp;2.57 |
+| Decoder | [Wan 2.1 VAE](https://arxiv.org/abs/2503.20314) in fp32 | fp16 with [sub-pixel](https://arxiv.org/abs/1609.05158) upsampling | 2.57&nbsp;→&nbsp;1.95 |
+| Compiler | PyTorch eager | one compiled graph | 1.95&nbsp;→&nbsp;1.68 |
+| Matmuls | bf16 linears | FP8 rowwise via [torchao](https://github.com/pytorch/ao/tree/main/torchao/float8) | 1.68&nbsp;→&nbsp;1.47 |
+| Attention | FlashAttention-2 | [SageAttention 2.2](https://arxiv.org/abs/2505.21136) | 1.47&nbsp;→&nbsp;1.04 |
+| Kernel&nbsp;fusion | one kernel per operation | fused kernels for norm, RoPE, residual and FP8 quant | 1.04&nbsp;→&nbsp;0.98 |
+| **Total** | 6.0&nbsp;FPS | **16.1&nbsp;FPS** | **2.68&nbsp;→&nbsp;0.98** |
 <!-- /table:ladder -->
 
 Original paper's code vs ours, per chunk (host syncs per three chunks; GPU busy and kernel launches from the profiler traces of both configurations, `OPTIMIZATIONS.md` §13 and §17):
