@@ -53,7 +53,9 @@ lingbot play dragon
 | `R` | restart the world from the image |
 | `Esc` | quit |
 
-| | |
+### Scripts
+
+| Script | |
 |---|---|
 | `lingbot play [scene]` | a window on the world; scenes: `lake` (default), `wall`, `stonehenge`, `alley`, `castle`, `dragon` |
 | `lingbot play --image me.jpg --prompt "..."` | your own world from any image |
