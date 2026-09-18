@@ -70,8 +70,6 @@ lingbot play dragon
 | Recommended | RTX 5090, 32 GB | everything here was measured on it; `setup.sh` ships prebuilt kernels for it (sm_120) |
 | Minimum | RTX 4090, 24 GB | untested: every patch supports sm_89, expect ~12 FPS; needs `sageattention` and `flash_attn` built from source and T5 on the CPU to fit |
 
-Linux x86_64 or Windows via WSL2, NVIDIA driver ≥ 570, a Hugging Face token for the weights. *Windows is untested, but reports are welcome.*
-
 ## Optimizations
 
 Nothing about the model changed. The checkpoint, the sampler and the decoder are upstream's, with the same 4 steps, chunks of 4 latents and a KV window of 18 frames. I worked through the stack from the top down, cheapest and most general layer first, measured each step, and stopped at the kernel boundary. The table shows seconds per chunk after each step in the order they were applied. A chunk is 16 frames, one second of video.
