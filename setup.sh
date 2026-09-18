@@ -10,6 +10,7 @@ REL=${REL:-https://github.com/kaarelkaarelson/lingbot-world-v2-1.3b-geforce-kern
 PY=${PY:-python3.12}
 
 [ -n "${HF_TOKEN:-}" ] || { echo "HF_TOKEN is not set (https://huggingface.co/settings/tokens)"; exit 1; }
+export HF_HUB_ENABLE_HF_TRANSFER=0   # some images export =1 without the hf_transfer package; plain downloads work everywhere
 if command -v "$PY" >/dev/null; then
   echo "== venv ($PY) =="
   [ -d .venv ] || "$PY" -m venv .venv
