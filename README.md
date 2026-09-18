@@ -107,10 +107,10 @@ What is left runs in four kernels written by others, and three of them are near 
 <!-- table:peaks -->
 | Kernel | Reached | Peak on RTX 5090 | of peak |
 |---|---|---|---|
-| SageAttention | 543 TOPS | 838 TOPS INT8 | **65 %** |
 | FP8 matmuls | 390 TFLOP/s | 419 TFLOP/s FP8 | **90 %** |
 | Decoder convolutions | 173 TFLOP/s | 210 TFLOP/s FP16 | **83 %** |
 | Fused elementwise | ~1.3 TB/s | 1.8 TB/s memory | **~70 %** |
+| SageAttention | 543 TOPS | 838 TOPS INT8 | **65 %** |
 <!-- /table:peaks -->
 
 The result is lossless. Four of the six steps are bit identical to the paper's code, and FP8 and the attention kernel were checked on identical inputs. PSNR, SSIM and LPIPS compare the same latents decoded by the paper's fp32 decoder and by ours. The rest are no reference metrics on the generated clips, measured on the first and last second. The numbers are in `quality_summary.tsv` from experiment 15.
