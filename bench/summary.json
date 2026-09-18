@@ -12,15 +12,6 @@
         "ran": "FP8 GEMMs, SageAttention, fused + compiled DiT, fused fp16 VAE"
       },
       {
-        "engine": "SGLang Diffusion",
-        "version": "v0.5.17",
-        "s_per_chunk": 2.48,
-        "fps": 6.45,
-        "ran": "torch SDPA, bf16 eager, fp32 VAE",
-        "url": "https://docs.sglang.io/docs/sglang-diffusion/",
-        "cite": 7
-      },
-      {
         "engine": "NVIDIA FlashDreams",
         "version": "c1889e0",
         "s_per_chunk": 1.85,
@@ -37,6 +28,15 @@
         "ran": "torch SDPA, bf16 DiT and VAE, eager",
         "url": "https://github.com/ModelTC/LightX2V",
         "cite": 9
+      },
+      {
+        "engine": "SGLang Diffusion",
+        "version": "v0.5.17",
+        "s_per_chunk": 2.48,
+        "fps": 6.45,
+        "ran": "torch SDPA, bf16 eager, fp32 VAE",
+        "url": "https://docs.sglang.io/docs/sglang-diffusion/",
+        "cite": 7
       },
       {
         "engine": "Original paper's code",

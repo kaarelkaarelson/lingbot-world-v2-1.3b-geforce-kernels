@@ -15,15 +15,11 @@ A 1.3B world model running at **<!-- n:fps_ours -->16.1<!-- /n --> FPS on one RT
 | Engine | s / chunk | FPS | Ours vs it |
 |---|---|---|---|
 | **Ours** | 0.98 | **16.1** | — |
-| SGLang Diffusion | 2.48 | 6.45 | **2.5×** |
 | NVIDIA FlashDreams | 1.85 | 8.65 | **1.9×** |
 | LightX2V | 2.07 | 7.73 | **2.1×** |
+| SGLang Diffusion | 2.48 | 6.45 | **2.5×** |
 | Original paper's code | 2.68 | 6.0 | **2.7×** |
 <!-- /table:engines -->
-
-One RTX 5090, 832×464, 4 denoising steps, 16-frame chunks (one second of video), the original Wan 2.1 decoder; steady state after warm-up. "As played" is 16 frames divided by the time to denoise and decode one chunk.
-
-The same checkpoint in other engines, each run as it ships on the same card and settings, one run each; nothing of mine was added to any of them. Speedup is FPS, ours ÷ theirs. Scripts, per-engine settings and raw logs: [`bench/engines/`](bench/engines/README.md).
 
 Same weights, decoder and settings, our presets against the paper's code:
 
