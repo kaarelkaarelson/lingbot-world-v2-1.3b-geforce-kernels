@@ -14,11 +14,11 @@ A 1.3B world model running at **<!-- n:fps_ours -->16.1<!-- /n --> FPS on one RT
 <!-- table:engines -->
 | Engine | s / chunk | FPS | Ours vs it |
 |---|---|---|---|
+| Original paper's code | 2.68 | 6.0 | **1.0×** |
+| SGLang Diffusion | 2.48 | 6.45 | **0.9×** |
+| LightX2V | 2.07 | 7.73 | **0.8×** |
+| NVIDIA FlashDreams | 1.85 | 8.65 | **0.7×** |
 | **Ours** | 0.98 | **16.1** | — |
-| NVIDIA FlashDreams | 1.85 | 8.65 | **1.9×** |
-| LightX2V | 2.07 | 7.73 | **2.1×** |
-| SGLang Diffusion | 2.48 | 6.45 | **2.5×** |
-| Original paper's code | 2.68 | 6.0 | **2.7×** |
 <!-- /table:engines -->
 
 Same weights, decoder and settings, our presets against the paper's code:

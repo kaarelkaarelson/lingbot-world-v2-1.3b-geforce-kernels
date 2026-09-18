@@ -5,29 +5,13 @@
     "source": "bench/engines/README.md; lingbot-world-v2-stream/bench_results/engines/",
     "rows": [
       {
-        "engine": "Ours",
-        "s_per_chunk": 0.98,
-        "fps": 16.1,
-        "ours": true,
-        "ran": "FP8 GEMMs, SageAttention, fused + compiled DiT, fused fp16 VAE"
-      },
-      {
-        "engine": "NVIDIA FlashDreams",
-        "version": "c1889e0",
-        "s_per_chunk": 1.85,
-        "fps": 8.65,
-        "ran": "bf16 cuDNN SDPA, its compile + CUDA graphs; window 20/6, static camera",
-        "url": "https://github.com/NVIDIA/flashdreams",
-        "cite": 8
-      },
-      {
-        "engine": "LightX2V",
-        "version": "69018c9",
-        "s_per_chunk": 2.07,
-        "fps": 7.73,
-        "ran": "torch SDPA, bf16 DiT and VAE, eager",
-        "url": "https://github.com/ModelTC/LightX2V",
-        "cite": 9
+        "engine": "Original paper's code",
+        "version": "single GPU",
+        "s_per_chunk": 2.68,
+        "fps": 6.0,
+        "ran": "bf16 FlashAttention-2 eager, fp32 VAE",
+        "url": "https://arxiv.org/abs/2607.07534",
+        "cite": 1
       },
       {
         "engine": "SGLang Diffusion",
@@ -39,13 +23,29 @@
         "cite": 7
       },
       {
-        "engine": "Original paper's code",
-        "version": "single GPU",
-        "s_per_chunk": 2.68,
-        "fps": 6.0,
-        "ran": "bf16 FlashAttention-2 eager, fp32 VAE",
-        "url": "https://arxiv.org/abs/2607.07534",
-        "cite": 1
+        "engine": "LightX2V",
+        "version": "69018c9",
+        "s_per_chunk": 2.07,
+        "fps": 7.73,
+        "ran": "torch SDPA, bf16 DiT and VAE, eager",
+        "url": "https://github.com/ModelTC/LightX2V",
+        "cite": 9
+      },
+      {
+        "engine": "NVIDIA FlashDreams",
+        "version": "c1889e0",
+        "s_per_chunk": 1.85,
+        "fps": 8.65,
+        "ran": "bf16 cuDNN SDPA, its compile + CUDA graphs; window 20/6, static camera",
+        "url": "https://github.com/NVIDIA/flashdreams",
+        "cite": 8
+      },
+      {
+        "engine": "Ours",
+        "s_per_chunk": 0.98,
+        "fps": 16.1,
+        "ours": true,
+        "ran": "FP8 GEMMs, SageAttention, fused + compiled DiT, fused fp16 VAE"
       }
     ]
   },
