@@ -14,7 +14,7 @@ Other engines that run this checkpoint, measured out of the box on the same card
 | SGLang Diffusion v0.5.17 | 2.48 | 6.45 | **2.5×** | torch SDPA, bf16 eager, fp32 VAE |
 | NVIDIA FlashDreams `c1889e0` | 1.85 | 8.65 | **1.9×** | bf16 cuDNN SDPA, its compile + CUDA graphs; window 20/6, static camera |
 | LightX2V `69018c9` | 2.07 | 7.73 | **2.1×** | torch SDPA, bf16 DiT and VAE, eager |
-| Upstream, single GPU (paper baseline) | 2.68 | 6.0 | **2.7×** | bf16 FlashAttention-2 eager, fp32 VAE |
+| Original paper's code, single GPU | 2.68 | 6.0 | **2.7×** | bf16 FlashAttention-2 eager, fp32 VAE |
 
 Every engine was run as it ships; nothing of ours was added to another engine. Speedup is FPS as played, ours ÷ theirs.
 
