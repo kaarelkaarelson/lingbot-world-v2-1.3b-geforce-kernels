@@ -238,5 +238,28 @@
         "after": "bit-identical"
       }
     ]
+  },
+  "numbers": {
+    "_note": "Inline numbers, rendered wherever a file has <!-- n:key -->…<!-- /n -->. All from the pod-10 runs (2026-09-17), the same card and day as the engine table.",
+    "fps_ours": "16.1",
+    "fps_ours_round": "16",
+    "fps_paper": "6.0",
+    "fps_paper_round": "6",
+    "s_ours": "0.98",
+    "s_paper": "2.68",
+    "speedup_paper": "2.7×",
+    "speedup_sglang": "2.5×",
+    "dit_ours": "0.64",
+    "vae_ours": "0.34",
+    "dit_paper": "1.62",
+    "vae_paper": "1.06",
+    "fps_exact": "14.8",
+    "s_exact": "1.07",
+    "dit_exact": "0.73",
+    "vae_exact": "0.34",
+    "peak_vram_gb": "28",
+    "fps_bench_range": "16.1–17.0",
+    "fps_play": "16.9",
+    "key_to_pixel_s": "1.58"
   }
 }

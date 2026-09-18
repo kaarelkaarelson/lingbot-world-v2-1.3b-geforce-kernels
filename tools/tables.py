@@ -142,6 +142,11 @@ HTML = {"engines": html_engines, "baseline": html_baseline_small, "ladder": html
 def render(path, renderers, check):
     text = open(path).read()
     new = text
+    # inline numbers: <!-- n:key -->value<!-- /n -->
+    for key, val in DATA["numbers"].items():
+        if key.startswith("_"):
+            continue
+        new = re.sub(rf"(<!-- n:{key} -->)(.*?)(<!-- /n -->)", lambda m: m.group(1) + val + m.group(3), new)
     for name, fn in renderers.items():
         pat = re.compile(rf"(<!-- table:{name} -->\n)(.*?)(<!-- /table:{name} -->)", re.S)
         if not pat.search(new):

@@ -2,7 +2,7 @@
 
 Write-up with the videos: [kaarelkaarelson.com/lingbot](https://kaarelkaarelson.com/lingbot/)
 
-Real-time [LingBot-World 2.0](https://github.com/Robbyant/lingbot-world-v2) (1.3B `causal_fast`) on one RTX 5090: **17 FPS as played** at 832×464 (16.9–17.0 measured on a stock pod), up from 5.5 FPS with the stock code, with the original Wan 2.1 decoder and no change to the model. Real time is 16 FPS.
+Real-time [LingBot-World 2.0](https://github.com/Robbyant/lingbot-world-v2) (1.3B `causal_fast`) on one RTX 5090: **<!-- n:fps_ours -->16.1<!-- /n --> FPS as played** at 832×464, <!-- n:speedup_paper -->2.7×<!-- /n --> the original paper's code (<!-- n:fps_paper -->6.0<!-- /n --> FPS on the same card), with the original Wan 2.1 decoder and no change to the model. Real time is 16 FPS.
 
 ![lingbot play dragon at 16 fps](docs/dragon_16fps.gif)
 
@@ -26,11 +26,11 @@ Scripts, deviations and raw logs: [`bench/engines/`](bench/engines/README.md), w
 
 This is the upstream repository at commit `1895d30` plus a set of inference patches, applied in-tree, with one command to run it. Everything here was measured on a RunPod RTX 5090 (32 GB); the measurements, the profiles and the quality checks live in [lingbot-world-v2-stream](https://github.com/kaarelkaarelson/lingbot-world-v2-stream).
 
-| Configuration | DiT + VAE, s per 1 s chunk | FPS as played |
+| Configuration | DiT + VAE, s per chunk | FPS as played |
 |---|---|---|
-| Stock repo, fp32 Wan VAE | 2.87 + 1.05 = 3.9 | 5.7 |
-| `--preset exact` (DiT bit-identical to stock bf16) | 0.73 + 0.34 = 1.07 | 14.8 |
-| **`--preset fast` (default)** | **0.62 + 0.33 = 0.95** | **16.9–17.0** |
+| Original paper's code, single GPU (`--preset stock`) | <!-- n:dit_paper -->1.62<!-- /n --> + <!-- n:vae_paper -->1.06<!-- /n --> = <!-- n:s_paper -->2.68<!-- /n --> | <!-- n:fps_paper -->6.0<!-- /n --> |
+| `--preset exact` (DiT bit-identical to the paper's bf16 model) | <!-- n:dit_exact -->0.73<!-- /n --> + <!-- n:vae_exact -->0.34<!-- /n --> = <!-- n:s_exact -->1.07<!-- /n --> | <!-- n:fps_exact -->14.8<!-- /n --> |
+| **`--preset fast` (default)** | **<!-- n:dit_ours -->0.64<!-- /n --> + <!-- n:vae_ours -->0.34<!-- /n --> = <!-- n:s_ours -->0.98<!-- /n -->** | **<!-- n:fps_ours -->16.1<!-- /n -->** |
 
 "As played" is what a streaming loop pays per second of video: four denoising steps plus the decode of 16 frames. The denoise loop alone runs at 25 FPS.
 
@@ -56,7 +56,7 @@ lingbot play                   # ~35 s of warm-up, then a window on the world at
 | `R` | restart the world from the image |
 | `Esc` | quit |
 
-Measured on a stock RunPod RTX 5090 (2026-09-17): `lingbot bench` 16.9–17.0 FPS as played, `lingbot play` 16.9 FPS with key→pixel 1.58 s p50 (the window shows it live). Nothing leaves the machine: no browser, no network, no codec.
+Measured on stock RunPod RTX 5090 pods (2026-09-17): `lingbot bench` <!-- n:fps_bench_range -->16.1–17.0<!-- /n --> FPS as played depending on the scene (the tables use the dragon clip), `lingbot play` <!-- n:fps_play -->16.9<!-- /n --> FPS with key→pixel <!-- n:key_to_pixel_s -->1.58<!-- /n --> s p50 (the window shows it live). Nothing leaves the machine: no browser, no network, no codec.
 
 ```bash
 lingbot bench                                                       # 22 s clip -> outputs/, prints s/chunk and FPS as played
