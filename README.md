@@ -9,8 +9,6 @@ A 1.3B world model running at **<!-- n:fps_ours -->16.1<!-- /n --> FPS on one RT
 
 ![lingbot play dragon at 16 fps](docs/dragon_16fps.gif)
 
-The `dragon` scene, 4 s of the 22 s clip at native 832×464 (the GIF plays at 12 fps; the counter is the real per-chunk generation rate, 16 frames ÷ that chunk's DiT + VAE time).
-
 ## Requirements
 
 | | GPU | |
