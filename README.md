@@ -3,15 +3,14 @@
 <p align="center">
   <a href="https://kaarelkaarelson.com/lingbot/"><b>Blog</b></a> &nbsp;·&nbsp;
   <a href="https://arxiv.org/abs/2607.07534">Paper</a> &nbsp;·&nbsp;
-  <a href="https://huggingface.co/robbyant/lingbot-world-v2-1.3b-causal-fast">Weights</a> &nbsp;·&nbsp;
-  <a href="https://github.com/kaarelkaarelson/lingbot-world-v2-realtime/releases/tag/v0.2.0">Videos</a>
+  <a href="https://huggingface.co/robbyant/lingbot-world-v2-1.3b-causal-fast">Weights</a>
 </p>
 
-A 1.3B video world model running at **<!-- n:fps_ours -->16.1<!-- /n --> FPS on one RTX 5090** — <!-- n:speedup_paper -->2.7×<!-- /n --> the original paper's code, same weights, same decoder.
+A 1.3B world model running at **<!-- n:fps_ours -->16.1<!-- /n --> FPS on one RTX 5090** — <!-- n:speedup_paper -->2.7×<!-- /n --> the original paper's code, same weights, same decoder.
 
 ![lingbot play dragon at 16 fps](docs/dragon_16fps.gif)
 
-`lingbot play dragon`, 4 s of the 22 s clip at native 832×464 (the GIF plays at 12 fps; the counter is the real per-chunk generation rate, 16 frames ÷ that chunk's DiT + VAE time). Full clip: [dragon_16fps.mp4](https://github.com/kaarelkaarelson/lingbot-world-v2-realtime/releases/download/v0.2.0/dragon_16fps.mp4) (22 MB).
+`lingbot play dragon`, 4 s of the 22 s clip at native 832×464 (the GIF plays at 12 fps; the counter is the real per-chunk generation rate, 16 frames ÷ that chunk's DiT + VAE time).
 
 ## Quick start
 
@@ -32,11 +31,7 @@ HF_TOKEN=hf_... ./setup.sh
 ~35 s of warm-up, then a window on the world at 16 FPS.
 
 ```bash
-. .venv/bin/activate
-lingbot play                                  # the default scene, lake
-lingbot play dragon                           # scenes: lake, wall, stonehenge, alley, castle, dragon
-lingbot play --image me.jpg --prompt "..."    # your own first frame and prompt
-lingbot play --input-mode hold                # held keys act from the next chunk
+. .venv/bin/activate && lingbot play
 ```
 
 | Key | Action |
@@ -46,13 +41,6 @@ lingbot play --input-mode hold                # held keys act from the next chun
 | `←` `→` `↑` `↓` | look (45°/s); mouse drag also looks |
 | `R` | restart the world from the image |
 | `Esc` | quit |
-
-### Without a window
-
-```bash
-lingbot bench                                                       # 22 s clip to outputs/, prints s/chunk and FPS as played
-lingbot clip --image me.jpg --action_path my_poses/ --prompt "..."  # offline generation, any generate.py flag
-```
 
 ## Results
 
@@ -144,9 +132,9 @@ Lossless: four of the six steps are bit-identical to the paper's code; FP8 and t
 
 - `lingbot play wall` picks another scene — each is an image + prompt + camera intrinsics from upstream's examples: `lake` (default), `wall` (Great Wall), `stonehenge`, `alley` (game-engine city), `castle` and `dragon` (dragon rider over a jungle). Your own world: `lingbot play --image me.jpg --prompt "one sentence describing the scene"`.
 - `setup.sh` fetches Python 3.12 through `uv` if the system lacks it; the torch wheels carry their own CUDA runtime, so the host needs only the driver. The weights (`robbyant/lingbot-world-v2-1.3b-causal-fast` + the Wan VAE and T5 from the 14B release) come from Hugging Face with your token and are not redistributed here.
-- First `play` after `setup.sh`: ~35 s of warm-up (compiled graphs from `.inductor_cache/`); on a cold cache ~2.5 min. Each new prompt is T5-encoded once (~30 s) and cached. Any image works (it is resized to the 480×832 pixel budget keeping its aspect ratio); the first image with a new aspect ratio compiles once more (~2.5 min).
+- The warm-up loads compiled graphs from `.inductor_cache/`; on a cold cache it takes ~2.5 min instead. Each new prompt is T5-encoded once (~30 s) and cached. Any image works (it is resized to the 480×832 pixel budget keeping its aspect ratio); the first image with a new aspect ratio compiles once more (~2.5 min).
 - The HUD (window title and terminal, once a second): FPS shown, seconds per chunk (a chunk = 16 frames = 1 s of video), key→pixel = keydown to the first shown frame of the latent it landed in. `--input-mode hold`: held keys act from the next chunk's first frame, releases overshoot by up to one chunk; the default `history` replays each key edge into the latent it was made in. `--frame_num` sets the rollout length (default 361 frames; the world restarts from the image after it).
-- `lingbot bench` / `lingbot clip` are `generate.py` with `run.sh`'s defaults (`./run.sh` still works). `my_poses/` = `poses.npy` (one OpenCV camera-to-world 4×4 per output frame) + `intrinsics.npy`, as in `examples/*/`.
+- Without a window: `lingbot bench` writes the 22 s clip to `outputs/` and prints s/chunk and FPS as played; `lingbot clip --image me.jpg --action_path my_poses/ --prompt "..."` generates offline (`generate.py` with `run.sh`'s defaults, any `generate.py` flag; `./run.sh` still works). `my_poses/` = `poses.npy` (one OpenCV camera-to-world 4×4 per output frame) + `intrinsics.npy`, as in `examples/*/`.
 - No display (a cloud pod): `SDL_VIDEODRIVER=dummy lingbot play --headless-seconds 120` runs the real model without a window, taps `W` every 2.5 s and prints the HUD and a summary (warm-up, s/chunk, FPS, key→pixel, underruns).
 - Native Windows is not supported (the prebuilt kernels are Linux wheels).
 - This repository is the upstream code at commit `1895d30` with the inference patches applied in-tree.
