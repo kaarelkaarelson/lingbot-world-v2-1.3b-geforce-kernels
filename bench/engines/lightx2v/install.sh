@@ -18,6 +18,8 @@ $U python install 3.12
 P="$LX/.venv/bin/python"
 $U pip install --python "$P" torch==2.8.0 torchvision==0.23.0 torchaudio==2.8.0 --index-url https://download.pytorch.org/whl/cu128
 $U pip install --python "$P" -e "$LX/LightX2V"                   # pure python; pulls diffusers/transformers/imageio-ffmpeg etc.
+# pyproject misses pyzmq (lightx2v.disagg imports it at module load); requirements.txt has it, minus the torch pins
+$U pip install --python "$P" -r <(grep -vE '^(torch|torchvision|torchaudio|flash|sage)' "$LX/LightX2V/requirements.txt")
 $U pip install --python "$P" "$WHL/flash_attn-2.8.3.post1-cp312-cp312-linux_x86_64.whl" "$WHL/sageattention-2.2.0-cp312-cp312-linux_x86_64.whl"
 "$P" - <<'PY'
 import torch
