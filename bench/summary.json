@@ -260,6 +260,7 @@
     "peak_vram_gb": "28",
     "fps_bench_range": "16.1–17.0",
     "fps_play": "16.9",
-    "key_to_pixel_s": "1.58"
+    "key_to_pixel_s": "1.58",
+    "fps_bench_lake": "17.0"
   }
 }
