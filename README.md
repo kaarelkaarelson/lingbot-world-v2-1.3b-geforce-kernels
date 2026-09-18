@@ -63,12 +63,6 @@ lingbot play dragon
 | `lingbot bench` | the 22 s clip to `outputs/`, prints s/chunk and FPS |
 | `lingbot clip --image me.jpg --action_path my_poses/ --prompt "..."` | offline generation from a camera path; any `generate.py` flag |
 
-| Configuration | DiT + VAE, s per chunk | FPS as played |
-|---|---|---|
-| Original paper's code, single GPU (`--preset stock`) | <!-- n:dit_paper -->1.62<!-- /n --> + <!-- n:vae_paper -->1.06<!-- /n --> = <!-- n:s_paper -->2.68<!-- /n --> | <!-- n:fps_paper -->6.0<!-- /n --> |
-| `--preset exact` (DiT bit-identical to the paper's bf16 model) | <!-- n:dit_exact -->0.73<!-- /n --> + <!-- n:vae_exact -->0.34<!-- /n --> = <!-- n:s_exact -->1.07<!-- /n --> | <!-- n:fps_exact -->14.8<!-- /n --> |
-| **`--preset fast` (default)** | **<!-- n:dit_ours -->0.64<!-- /n --> + <!-- n:vae_ours -->0.34<!-- /n --> = <!-- n:s_ours -->0.98<!-- /n -->** | **<!-- n:fps_ours -->16.1<!-- /n -->** |
-
 ## Requirements
 
 | | GPU | |
@@ -150,11 +144,11 @@ The result is lossless. Four of the six steps are bit identical to the paper's c
 
 ## Presets
 
-| `--preset` | What runs | Numerics vs stock |
-|---|---|---|
-| `fast` (default) | torch.compile + coordinate-descent tuning, fused DiT elementwise, sync-free loop, compensated-fp32 RoPE, FP8 rowwise linears, SageAttention (INT8 QK / FP8 PV), fused fp16 channels-last Wan VAE decoder | passed an A/B eye test against the stock output; decoder is 43.6 dB / LPIPS 0.004 on the same latents; the one-row time-embedding MLP differs from stock by ~1 fp32 ulp |
-| `exact` | same, with the DiT latents bit-identical to the stock bf16 model | bit-identical DiT; FP8 and SageAttention still change the sample (first-chunk LPIPS 0.02–0.03 vs bf16) |
-| `stock` | upstream code path | reference |
+| `--preset` | What runs | s / chunk | FPS |
+|---|---|---|---|
+| `stock` | the original paper's code | <!-- n:s_paper -->2.68<!-- /n --> | <!-- n:fps_paper -->6.0<!-- /n --> |
+| `exact` | ours, with the DiT latents bit identical to the paper's bf16 model | <!-- n:s_exact -->1.07<!-- /n --> | <!-- n:fps_exact -->14.8<!-- /n --> |
+| **`fast`** (default) | ours, FP8 linears, SageAttention, compiled and fused DiT, fused fp16 decoder | **<!-- n:s_ours -->0.98<!-- /n -->** | **<!-- n:fps_ours -->16.1<!-- /n -->** |
 
 ## Scope
 
