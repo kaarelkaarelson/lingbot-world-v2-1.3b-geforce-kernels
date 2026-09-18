@@ -39,7 +39,7 @@ Measured on stock RunPod RTX 5090 pods (2026-09-17): `lingbot bench` <!-- n:fps_
 
 ### Setup
 
-Once, ~15 min: Python 3.12, torch, the prebuilt kernels, 18 GB of weights, one compile warm-up.
+~15 min, downloads the weights.
 
 ```bash
 git clone https://github.com/kaarelkaarelson/lingbot-world-v2-realtime
