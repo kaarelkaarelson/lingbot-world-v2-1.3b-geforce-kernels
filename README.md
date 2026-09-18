@@ -21,7 +21,7 @@ A 1.3B world model running at **<!-- n:fps_ours -->16.1<!-- /n --> FPS on one RT
 | **Ours** | 0.98 | **16.1** | — |
 <!-- /table:engines -->
 
-Measured on a stock RunPod RTX 5090 (2026-09-17): `lingbot bench` <!-- n:fps_bench_lake -->17.0<!-- /n --> FPS on the default lake scene, <!-- n:fps_ours -->16.1<!-- /n --> on the dragon clip the tables use; `SDL_VIDEODRIVER=dummy lingbot play --headless-seconds 120` <!-- n:fps_play -->16.9<!-- /n --> FPS with key→pixel <!-- n:key_to_pixel_s -->1.58<!-- /n --> s p50.
+Measured with `lingbot bench` on a stock RunPod RTX 5090 (2026-09-17): <!-- n:fps_ours -->16.1<!-- /n --> FPS on the dragon clip the tables use, <!-- n:fps_bench_lake -->17.0<!-- /n --> on the default lake scene.
 
 ## Quick start
 
