@@ -19,14 +19,13 @@ SGLang drives its own WASD script), so the clips share a first frame and prompt,
 
 ![one clip played at each engine's measured chunk cadence](../../docs/engines_same_clip_cadence.gif)
 
-One clip (ours, dragon scene, seed 42), shown four times at each engine's measured steady-state
-generation cadence — top left ours 16.1 FPS, top right FlashDreams 8.65, bottom left LightX2V 7.73,
-bottom right SGLang 6.45. The frames are the same by construction; only the timing is each
-engine's (every 16-frame chunk is held for that engine's measured seconds per chunk). Engines do
-not reproduce a seed, so this is a timing visualisation, not four renders: each engine's own output
-is in `lingbot-world-v2-stream/bench_results/engines/`. Full video:
-[engines_same_clip_cadence_2x2.mp4](https://github.com/kaarelkaarelson/lingbot-world-v2-1.3b-geforce-kernels/releases/download/v0.2.0/engines_same_clip_cadence_2x2.mp4)
-(56 s: ours finishes the 22 s of world time at 21 s, SGLang at 54 s).
+One clip (ours, dragon scene, seed 42), shown six times at each row's measured steady-state
+generation cadence, engine and FPS under each panel. The frames are the same by construction;
+only the timing is each engine's (every 16-frame chunk is held for that engine's measured seconds
+per chunk). Engines do not reproduce a seed, so this is a timing visualisation, not six renders:
+each engine's own output is in `lingbot-world-v2-stream/bench_results/engines/`. Full video:
+[engines_grid_same_clip.mp4](https://github.com/kaarelkaarelson/lingbot-world-v2-1.3b-geforce-kernels/releases/download/v0.2.0/engines_grid_same_clip.mp4)
+(60 s: `fast` finishes the 22 s of world time at 21 s, upstream at 59 s).
 
 Raw logs, stats JSON and output clips: `lingbot-world-v2-stream/bench_results/engines/`.
 The research behind each choice of settings: `lingbot-world-v2-stream/research/engines/`.
