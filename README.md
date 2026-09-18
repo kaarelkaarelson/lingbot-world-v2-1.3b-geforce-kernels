@@ -1,5 +1,7 @@
 # LingBot-World 2.0 (1.3B) — GeForce kernels
 
+Write-up with the videos: [kaarelkaarelson.com/lingbot](https://kaarelkaarelson.com/lingbot/)
+
 Real-time [LingBot-World 2.0](https://github.com/Robbyant/lingbot-world-v2) (1.3B `causal_fast`) on one RTX 5090: **17 FPS as played** at 832×464 (16.9–17.0 measured on a stock pod), up from 5.5 FPS with the stock code, with the original Wan 2.1 decoder and no change to the model. Real time is 16 FPS.
 
 ![lingbot play dragon at 16 fps](docs/dragon_16fps.gif)
