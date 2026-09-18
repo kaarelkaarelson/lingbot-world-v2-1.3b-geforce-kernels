@@ -11,7 +11,7 @@ Other engines that run this checkpoint, measured out of the box on the same card
 | Engine | s per chunk | FPS as played | Ours vs it | What it ran on the 5090 |
 |---|---|---|---|---|
 | **Ours** (`--preset fast`) | 0.98 | **16.1** | — | FP8 GEMMs, SageAttention, fused + compiled DiT, fused fp16 VAE |
-| SGLang v0.5.17 | 2.48 | 6.45 | **2.5×** | torch SDPA, bf16 eager, fp32 VAE |
+| SGLang Diffusion v0.5.17 | 2.48 | 6.45 | **2.5×** | torch SDPA, bf16 eager, fp32 VAE |
 | NVIDIA FlashDreams `c1889e0` | 1.85 | 8.65 | **1.9×** | bf16 cuDNN SDPA, its compile + CUDA graphs; window 20/6, static camera |
 | LightX2V `69018c9` | 2.07 | 7.73 | **2.1×** | torch SDPA, bf16 DiT and VAE, eager |
 | Upstream, single GPU (paper baseline) | 2.68 | 6.0 | **2.7×** | bf16 FlashAttention-2 eager, fp32 VAE |
