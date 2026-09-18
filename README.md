@@ -41,14 +41,6 @@ HF_TOKEN=hf_... ./setup.sh && . .venv/bin/activate
 lingbot play dragon
 ```
 
-| Key | Action |
-|---|---|
-| `W` `A` `S` `D` | move (hold `Shift` to run) |
-| `Q` `E` | down / up |
-| `←` `→` `↑` `↓` | look (45°/s); mouse drag also looks |
-| `R` | restart the world from the image |
-| `Esc` | quit |
-
 ### Commands
 
 | | |
@@ -58,6 +50,14 @@ lingbot play dragon
 | `SDL_VIDEODRIVER=dummy lingbot play --headless-seconds 120` | no display (a cloud pod): same model, no window, taps `W` and prints the HUD summary |
 | `lingbot bench` | the 22 s clip to `outputs/`, prints s/chunk and FPS |
 | `lingbot clip --image me.jpg --action_path my_poses/ --prompt "..."` | offline generation from a camera path; any `generate.py` flag |
+
+| Key | Action |
+|---|---|
+| `W` `A` `S` `D` | move (hold `Shift` to run) |
+| `Q` `E` | down / up |
+| `←` `→` `↑` `↓` | look (45°/s); mouse drag also looks |
+| `R` | restart the world from the image |
+| `Esc` | quit |
 
 | Configuration | DiT + VAE, s per chunk | FPS as played |
 |---|---|---|
