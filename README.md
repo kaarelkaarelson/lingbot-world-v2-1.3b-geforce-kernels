@@ -13,15 +13,7 @@ A 1.3B world model running at **<!-- n:fps_ours -->16.1<!-- /n --> FPS on one RT
 
 One RTX 5090, 832×464, 4 denoising steps, 16-frame chunks (one second of video), the original Wan 2.1 decoder; steady state after warm-up. "As played" is 16 frames divided by the time to denoise and decode one chunk.
 
-| Configuration | DiT + VAE, s per chunk | FPS as played |
-|---|---|---|
-| Original paper's code, single GPU (`--preset stock`) | <!-- n:dit_paper -->1.62<!-- /n --> + <!-- n:vae_paper -->1.06<!-- /n --> = <!-- n:s_paper -->2.68<!-- /n --> | <!-- n:fps_paper -->6.0<!-- /n --> |
-| `--preset exact` (DiT bit-identical to the paper's bf16 model) | <!-- n:dit_exact -->0.73<!-- /n --> + <!-- n:vae_exact -->0.34<!-- /n --> = <!-- n:s_exact -->1.07<!-- /n --> | <!-- n:fps_exact -->14.8<!-- /n --> |
-| **`--preset fast` (default)** | **<!-- n:dit_ours -->0.64<!-- /n --> + <!-- n:vae_ours -->0.34<!-- /n --> = <!-- n:s_ours -->0.98<!-- /n -->** | **<!-- n:fps_ours -->16.1<!-- /n -->** |
-
-Measured on stock RunPod RTX 5090 pods (2026-09-17): `lingbot bench` <!-- n:fps_bench_range -->16.1–17.0<!-- /n --> FPS as played depending on the scene (the tables use the dragon clip), `lingbot play` <!-- n:fps_play -->16.9<!-- /n --> FPS with key→pixel <!-- n:key_to_pixel_s -->1.58<!-- /n --> s p50 (the window shows it live). Nothing leaves the machine: no browser, no network, no codec.
-
-The same checkpoint in other engines, each run as it ships on the same card and settings, one run each; nothing of mine was added to any of them. The scripts, the settings that differ per engine and the raw logs are in `bench/engines/`.
+The same checkpoint in other engines, each run as it ships on the same card and settings, one run each; nothing of mine was added to any of them. Speedup is FPS, ours ÷ theirs. Scripts, per-engine settings and raw logs: [`bench/engines/`](bench/engines/README.md).
 
 <!-- table:engines -->
 | Engine | s / chunk | FPS | Ours vs it |
@@ -33,7 +25,15 @@ The same checkpoint in other engines, each run as it ships on the same card and 
 | Original paper's code | 2.68 | 6.0 | **2.7×** |
 <!-- /table:engines -->
 
-Nothing of ours was added to another engine; speedup is FPS as played, ours ÷ theirs. Scripts, per-engine deviations and raw logs: [`bench/engines/`](bench/engines/README.md).
+Same weights, decoder and settings, our presets against the paper's code:
+
+| Configuration | DiT + VAE, s per chunk | FPS as played |
+|---|---|---|
+| Original paper's code, single GPU (`--preset stock`) | <!-- n:dit_paper -->1.62<!-- /n --> + <!-- n:vae_paper -->1.06<!-- /n --> = <!-- n:s_paper -->2.68<!-- /n --> | <!-- n:fps_paper -->6.0<!-- /n --> |
+| `--preset exact` (DiT bit-identical to the paper's bf16 model) | <!-- n:dit_exact -->0.73<!-- /n --> + <!-- n:vae_exact -->0.34<!-- /n --> = <!-- n:s_exact -->1.07<!-- /n --> | <!-- n:fps_exact -->14.8<!-- /n --> |
+| **`--preset fast` (default)** | **<!-- n:dit_ours -->0.64<!-- /n --> + <!-- n:vae_ours -->0.34<!-- /n --> = <!-- n:s_ours -->0.98<!-- /n -->** | **<!-- n:fps_ours -->16.1<!-- /n -->** |
+
+Measured on stock RunPod RTX 5090 pods (2026-09-17): `lingbot bench` <!-- n:fps_bench_range -->16.1–17.0<!-- /n --> FPS as played depending on the scene (the tables use the dragon clip), `lingbot play` <!-- n:fps_play -->16.9<!-- /n --> FPS with key→pixel <!-- n:key_to_pixel_s -->1.58<!-- /n --> s p50 (the window shows it live). Nothing leaves the machine: no browser, no network, no codec.
 
 ## Quick start
 
