@@ -8,14 +8,15 @@ Real-time [LingBot-World 2.0](https://github.com/Robbyant/lingbot-world-v2) (1.3
 
 Other engines that run this checkpoint, measured out of the box on the same card at the same settings (832×464, 4 steps, 16-frame chunks, Wan VAE; steady state after warm-up, one run each):
 
-| Engine | s per chunk | FPS as played | Our optimizations | What it ran on the 5090 |
+| Engine | s per chunk | FPS as played | Ours vs it | What it ran on the 5090 |
 |---|---|---|---|---|
-| **This repo, `--preset fast`** | 0.98 | **16.1** | all | FP8 GEMMs, SageAttention, fused + compiled DiT, fused fp16 VAE |
-| This repo, `--preset exact` | 1.07 | 14.8 | all but the one-row time MLP | DiT bit-identical to upstream |
-| NVIDIA FlashDreams `c1889e0` | 1.85 | 8.65 | none | bf16 cuDNN SDPA, its compile + CUDA graphs; window 20/6, static camera |
-| LightX2V `69018c9` | 2.07 | 7.73 | none | torch SDPA, bf16 DiT and VAE, eager |
-| SGLang v0.5.17 | 2.48 | 6.45 | none | torch SDPA, bf16 eager, fp32 VAE |
-| Upstream single-GPU (`--preset stock`) | 2.68 | 6.0 | none | bf16 FlashAttention-2 eager, fp32 VAE |
+| **Ours** (`--preset fast`) | 0.98 | **16.1** | — | FP8 GEMMs, SageAttention, fused + compiled DiT, fused fp16 VAE |
+| SGLang v0.5.17 | 2.48 | 6.45 | **2.5×** | torch SDPA, bf16 eager, fp32 VAE |
+| NVIDIA FlashDreams `c1889e0` | 1.85 | 8.65 | **1.9×** | bf16 cuDNN SDPA, its compile + CUDA graphs; window 20/6, static camera |
+| LightX2V `69018c9` | 2.07 | 7.73 | **2.1×** | torch SDPA, bf16 DiT and VAE, eager |
+| Upstream, single GPU (paper baseline) | 2.68 | 6.0 | **2.7×** | bf16 FlashAttention-2 eager, fp32 VAE |
+
+Every engine was run as it ships; nothing of ours was added to another engine. Speedup is FPS as played, ours ÷ theirs.
 
 Scripts, deviations and raw logs: [`bench/engines/`](bench/engines/README.md), with one clip played at each engine's cadence.
 
