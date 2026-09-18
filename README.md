@@ -29,7 +29,7 @@ Measured with `lingbot bench` on a stock RunPod RTX 5090 (2026-09-17).
 
 ### Setup
 
-~15 min, downloads the weights.
+~15 min on Linux, needs a Hugging Face token to download the weights.
 
 ```bash
 git clone https://github.com/kaarelkaarelson/lingbot-world-v2-realtime
@@ -42,6 +42,8 @@ HF_TOKEN=hf_... ./setup.sh && . .venv/bin/activate
 ```bash
 lingbot play dragon
 ```
+
+The first start compiles for about 2.5 min, later starts take 35 s. Any image works, and a new prompt takes 30 s to encode once. The window title shows the FPS.
 
 ### Commands
 
@@ -61,7 +63,7 @@ lingbot play dragon
 | `lingbot play --image me.jpg --prompt "..."` | your own world from any image |
 | `SDL_VIDEODRIVER=dummy lingbot play --headless-seconds 120` | no display (a cloud pod): same model, no window, taps `W` and prints the HUD summary |
 | `lingbot bench` | the 22 s clip to `outputs/`, prints s/chunk and FPS |
-| `lingbot clip --image me.jpg --action_path my_poses/ --prompt "..."` | offline generation from a camera path; any `generate.py` flag |
+| `lingbot clip --image me.jpg --action_path my_poses/ --prompt "..."` | offline generation from a camera path, `poses.npy` and `intrinsics.npy` as in `examples/` |
 
 ## Requirements
 
@@ -129,16 +131,6 @@ The result is lossless. Four of the six steps are bit identical to the paper's c
 <!-- /table:quality -->
 
 `OPTIMIZATIONS.md` is the full log. It has every experiment with its measurement, the profiles, and the levers that were tried and rejected.
-
-## Using it
-
-- Each scene is an image + prompt + camera intrinsics from upstream's examples: `wall` is the Great Wall, `alley` a game-engine city, `dragon` a dragon rider over a jungle. For your own image, `--prompt` is one sentence describing the scene.
-- `setup.sh` fetches Python 3.12 through `uv` if the system lacks it; the torch wheels carry their own CUDA runtime, so the host needs only the driver. The weights (`robbyant/lingbot-world-v2-1.3b-causal-fast` + the Wan VAE and T5 from the 14B release) come from Hugging Face with your token and are not redistributed here.
-- The warm-up loads compiled graphs from `.inductor_cache/`; on a cold cache it takes ~2.5 min instead. Each new prompt is T5-encoded once (~30 s) and cached. Any image works (it is resized to the 480×832 pixel budget keeping its aspect ratio); the first image with a new aspect ratio compiles once more (~2.5 min).
-- The HUD (window title and terminal, once a second): FPS shown, seconds per chunk (a chunk = 16 frames = 1 s of video), key→pixel = keydown to the first shown frame of the latent it landed in. `--input-mode hold`: held keys act from the next chunk's first frame, releases overshoot by up to one chunk; the default `history` replays each key edge into the latent it was made in. `--frame_num` sets the rollout length (default 361 frames; the world restarts from the image after it).
-- `bench` and `clip` are `generate.py` with `run.sh`'s defaults (`./run.sh` still works). `my_poses/` = `poses.npy` (one OpenCV camera-to-world 4×4 per output frame) + `intrinsics.npy`, as in `examples/*/`.
-- The headless run taps `W` every 2.5 s; its summary lists warm-up, s/chunk, FPS, key→pixel and underruns.
-- Native Windows is not supported (the prebuilt kernels are Linux wheels).
 
 ## Presets
 
