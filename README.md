@@ -2,8 +2,7 @@
 
 <p align="center">
   <a href="https://kaarelkaarelson.com/lingbot/"><b>Blog</b></a> &nbsp;·&nbsp;
-  <a href="https://arxiv.org/abs/2607.07534">Paper</a> &nbsp;·&nbsp;
-  <a href="https://huggingface.co/robbyant/lingbot-world-v2-1.3b-causal-fast">Weights</a>
+  <a href="https://arxiv.org/abs/2607.07534">Original paper</a>
 </p>
 
 A 1.3B world model running at **<!-- n:fps_ours -->16.1<!-- /n --> FPS on one RTX 5090** — <!-- n:speedup_paper -->2.7×<!-- /n --> the original paper's code, same weights, same decoder.
@@ -137,7 +136,6 @@ Lossless: four of the six steps are bit-identical to the paper's code; FP8 and t
 - Without a window: `lingbot bench` writes the 22 s clip to `outputs/` and prints s/chunk and FPS as played; `lingbot clip --image me.jpg --action_path my_poses/ --prompt "..."` generates offline (`generate.py` with `run.sh`'s defaults, any `generate.py` flag; `./run.sh` still works). `my_poses/` = `poses.npy` (one OpenCV camera-to-world 4×4 per output frame) + `intrinsics.npy`, as in `examples/*/`.
 - No display (a cloud pod): `--headless-seconds 120` with `SDL_VIDEODRIVER=dummy` runs the real model without a window, taps `W` every 2.5 s and prints the HUD and a summary (warm-up, s/chunk, FPS, key→pixel, underruns).
 - Native Windows is not supported (the prebuilt kernels are Linux wheels).
-- This repository is the upstream code at commit `1895d30` with the inference patches applied in-tree.
 
 ## Presets
 
@@ -161,4 +159,13 @@ Lossless: four of the six steps are bit-identical to the paper's code; FP8 and t
 
 ## License and credit
 
-Upstream is CC BY-NC-SA 4.0, so this repository is too: non-commercial use, attribution, share-alike (`LICENSE.txt`, unchanged). The model, the sampler and the examples are the Robbyant team's ([paper](https://arxiv.org/abs/2607.07534), `UPSTREAM_README.md`). Kernels used: [SageAttention](https://github.com/thu-ml/SageAttention), [torchao](https://github.com/pytorch/ao), [FlashAttention](https://github.com/Dao-AILab/flash-attention).
+Derived from [LingBot-World 2.0](https://github.com/Robbyant/lingbot-world-v2) by the Robbyant team (Zelin Gao et al., [arXiv:2607.07534](https://arxiv.org/abs/2607.07534)): the model, the sampler and the examples are theirs, the weights are [theirs on Hugging Face](https://huggingface.co/robbyant/lingbot-world-v2-1.3b-causal-fast) and are not redistributed here. Upstream is CC BY-NC-SA 4.0, so this repository is too (`LICENSE.txt`, unchanged): non-commercial use, attribution, share-alike, provided as-is without warranty. Modifications: the inference patches listed under Optimizations and the `lingbot` CLI, on upstream commit `1895d30`. `wan/` is upstream's copy of [Wan2.2](https://github.com/Wan-Video/Wan2.2) (Apache-2.0). Kernels used: [SageAttention](https://github.com/thu-ml/SageAttention), [torchao](https://github.com/pytorch/ao), [FlashAttention](https://github.com/Dao-AILab/flash-attention).
+
+```bibtex
+@article{lingbot-world-v2,
+  title   = {Infinite Worlds with Versatile Interactions},
+  author  = {Zelin Gao and Qiuyu Wang and Jiapeng Zhu and Jingye Chen and Zichen Liu and Qingyan Bai and Jiahao Wang and Yufeng Yuan and Hanlin Wang and Yichong Lu and Ka Leong Cheng and Haojie Zhang and Jian Gao and Tianrui Feng and Yuzheng Liu and Yao Yao and Yinghao Xu and Xing Zhu and Yujun Shen and Hao Ouyang},
+  journal = {arXiv preprint arXiv:2607.07534},
+  year    = {2026}
+}
+```
