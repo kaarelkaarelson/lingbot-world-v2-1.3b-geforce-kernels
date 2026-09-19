@@ -69,3 +69,24 @@ Every route needs: public weights, the shipped compile cache, and an early hard 
 - Stock image = Python 3.11 / CUDA 12.4 toolkit: `python3.12 not found` → fixed, `setup.sh` fetches
   3.12 via `uv`; `add-apt-repository` is broken on that image, so no deadsnakes.
 - RunPod's direct SSH port never published on this pod; the relay works only as an interactive PTY.
+
+## Optimization candidates (2026-09-18, from launch feedback)
+
+- **comfy-kitchen attention** ([Comfy-Org/comfy-kitchen](https://github.com/Comfy-Org/comfy-kitchen), Apache-2.0): pure INT8 SDPA,
+  INT8 QK with block-Hadamard like Sage, but INT8 P·V where SageAttention 2.2 uses FP8. Tuned for sm_120. Attention is the one
+  kernel with headroom (§17: 65 % of INT8 peak, 0.278 s of the 0.98 s chunk), so a few percent is plausible; no first-party
+  benchmark against Sage 2.2 exists, and the 1.4–1.65× figures around are for its block-sparse "Sol" attention (approximate, and
+  slower than dense below ~12k tokens; we are at ~27k). Its wheels need CUDA 13 / driver r580, so on the cu128 stack it is a source
+  build. Experiment: drop-in behind `LINGBOT_ATTN=kitchen`, one `lingbot bench`, then the exp15 quality set (INT8 PV is coarser
+  than FP8 PV). Suggested by a commenter; unverified.
+- **comfy-kitchen PR #167** (kijai, H3 VAE): fused GroupNorm+SiLU+pad and fp16-accumulate CUTLASS conv3d in the encoder, CUTLASS
+  GEMM decoder with fused residual epilogues. The quoted 2.3× is the encode path; decode 34.6 → 31.1 s. Wan 2.1's decoder is
+  conv-based and already fused fp16 at 83 % of peak, so the ceiling here is ~0.06 s per chunk. Not planned.
+- **Run-to-run determinism.** Two identical `--preset fast` 22 s runs on one pod differ from frame 0 (36 dB) and diverge to
+  ~13 dB by 20 s; same seed does not give the same video. Candidates: `cudnn.benchmark=False`, `use_deterministic_algorithms`,
+  pinned autotune choices via `torch.compiler.save_cache_artifacts()` (also removes most of the 2.5 min warm-up and makes results
+  reproducible across 5090s). Measure the FPS cost; state the current behaviour under Limits.
+- **Length-independent conditioning** (`LINGBOT_REF_FRAMES`, uncommitted patch in `wan/image2video.py`): the sampler draws the
+  noise for the whole clip up front and normalises the camera path by its whole-trajectory maximum, so a 961-frame run cannot
+  reproduce a 361-frame run's opening even with the same seed. The patch draws the first N latents' noise and the path
+  normalisation as the N-frame run does. Only useful once determinism above holds.
